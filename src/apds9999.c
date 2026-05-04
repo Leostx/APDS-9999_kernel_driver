@@ -13,7 +13,7 @@
  *
  * - [ ] power management ?
  * - [ ] of_device_id table for device tree compatibility?
- * - [ ]
+ * - [ ] overflow bits of the measurement registers
  * - [ ]
  * - [ ]
  *
@@ -61,11 +61,62 @@
 #define APDS9999_REG_LS_THRES_LOW_2    0x26  /* LS lower threshold high byte */
 #define APDS9999_REG_LS_THRES_VAR      0x27  /* LS variance threshold */
 
+// TODO we may add bitmasks to easily address specific bits in the registers by names
+
+
 // This is the type of struct that will eventually hold the data that our driver needs to function
 struct apds9999_data {    
 	struct i2c_client *client;
-	struct iio_dev *indio_dev; // TODO bohhh
+	struct iio_dev *indio_dev;
 };
+
+// Here we will define all the channels that then get assigned to the iio once created
+static const struct iio_chan_spec apds9999_channels[] = {
+	// all data registers are locked in hardware if i2c is reading from them. 
+	// This is to guarantee to read the same measurement data. Eventual new data is inserted afterwards
+	
+	
+	/* Proximity Sensor (PS) - Maximum resolution 11, default resolution 8 bit ( set in PS_MEAS_RATE ) */
+	{
+		.type           = IIO_PROXIMITY,
+		.address        = APDS9999_REG_PS_DATA_0,
+		.scan_index     = 0,				/* This is for block reading, so we define the channels ordering in hardware */
+		.scan_type      = {
+			.sign           = 'u',
+			.realbits       = 11,			/* TODO should we modify this based on the value set in PS_MEAS_RATE? */
+			.storagebits    = 16,
+			.shift          = 0,
+			.endianness     = IIO_CPU,		/* This refers to the buffer used by the driver */
+		},
+		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),	
+		.info_mask_shared_by_type =
+			BIT(IIO_CHAN_INFO_SCALE) |
+			BIT(IIO_CHAN_INFO_INT_TIME),		/* */
+	},
+
+
+	/* InfraRed Light Sensor (IR - LS) - LS resolution: 13 - 20 bit, default 18 bit ( set in LS_MEAS_RATE ) */
+	{
+		.type           = IIO_INTENSITY,
+		.modified       = 1,
+		.channel2       = IIO_MOD_LIGHT_IR,
+		.address        = APDS9999_REG_LS_DATA_IR_0,
+		.scan_index     = 2,
+		.scan_type      = {
+			.sign           = 'u',
+			.realbits       = 20,
+			.storagebits    = 32,
+			.shift          = 0,
+			.endianness     = IIO_CPU,
+		},
+		.info_mask_separate     = BIT(IIO_CHAN_INFO_RAW),
+		.info_mask_shared_by_type =				/* the switch case for reading is shared by all channels of the same type - intensity in this case */
+			BIT(IIO_CHAN_INFO_RESOLUTION) |		/* the resolution can be set in LS_MEAS_RES */
+			BIT(IIO_CHAN_INFO_SAMP_FREQ)  |		/* the measurement rate can be set in the LS_MEAS_RES */ 
+			BIT(IIO_CHAN_INFO_SCALE),			/* the gain in settable in the LS_GAIN */
+	},
+
+}
 
 static int apds9999_read_register(){
 
@@ -78,10 +129,30 @@ static int apds9999_write_register(){
 // This function gets called when the kernel loads detects the device and loads this driver. 
 // We can save the i2c_client handle for further use
 static int apds9999_probe(struct i2c_client *client){
+	// data struct that holds the data for out device
+	struct apds9960_data *data;
+	// the iio_dev that gets returned whe we allocate it with the iio subsystem
+	struct iio_dev *indio_dev;
+	int ret;
+
+	// we use devm_iio over the plain iio, so that the allocated memory gets freed automatically when the driver is detached
+	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*data));
+	// if the allocation failed we got NULL as return value
+	if (!indio_dev)
+		// this return value means we could not get enough memory
+		// we negate it, because the error code in <errno.h> is defined as positive number, to indicate an error we need to return a negative one
+		return -ENOMEM;
+
 	
+	// set attributes of the iio_dev
+	indio_dev->channels = apds9999_channels;
+	// TODO add also all the other attributes
+
+
 	// TODO
 	
 	println("Hello world from apds9999");
+	return 0;
 }
 
 
@@ -93,7 +164,7 @@ static int apds9999_remove(struct i2c_client *client){
 	
 	// TODO
 	println("Goodbye world from apds9999");
-	
+	return 0;	
 }
 
 
@@ -122,4 +193,4 @@ module_i2c_driver(apds9999_driver);
 
 MODULE_AUTHOR("Lucx & Lstx");
 MODULE_DESCRIPTION("APDS-9999 Digital Proximity and RGB sensor driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
