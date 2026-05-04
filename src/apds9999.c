@@ -20,6 +20,8 @@
  *
  */
 
+// Driver Name - done as define, since we use it multiple times
+#define APDS9999_DRIVER_NAME 	"apds9999"
 
 // Register definitions for the device - check datasheet for more information
 
@@ -80,7 +82,8 @@ static const struct iio_chan_spec apds9999_channels[] = {
 	{
 		.type           = IIO_PROXIMITY,
 		.address        = APDS9999_REG_PS_DATA_0,
-		.scan_index     = 0,				/* This is for block reading, so we define the channels ordering in hardware */
+		/* The following two are for buffer reading, so userspace consumes less cpu when reading the whole sensor continiously */
+		.scan_index     = 0,				/* This defines the order in which channels are placed inside the buffer */			
 		.scan_type      = {
 			.sign           = 'u',
 			.realbits       = 11,			/* TODO should we modify this based on the value set in PS_MEAS_RATE? */
@@ -118,20 +121,22 @@ static const struct iio_chan_spec apds9999_channels[] = {
 
 }
 
-static int apds9999_read_register(){
+static int apds9999_read_raw(){
 
 }
 
-static int apds9999_write_register(){
-
-}
+static const struct iio_info apds9960_info = {
+	.read_raw = apds9999_read_raw,
+	// TODO attributes
+	// TODO writes
+};
 
 // This function gets called when the kernel loads detects the device and loads this driver. 
 // We can save the i2c_client handle for further use
 static int apds9999_probe(struct i2c_client *client){
 	// data struct that holds the data for out device
 	struct apds9960_data *data;
-	// the iio_dev that gets returned whe we allocate it with the iio subsystem
+	// the iio_dev that gets returned when we allocate it with the iio subsystem
 	struct iio_dev *indio_dev;
 	int ret;
 
@@ -145,7 +150,10 @@ static int apds9999_probe(struct i2c_client *client){
 
 	
 	// set attributes of the iio_dev
-	indio_dev->channels = apds9999_channels;
+	indio_dev->name = APDS9999_DRIVER_NAME;
+	indio_dev->info = &apds9960_info;			// hook to the functions to interact with the device
+	indio_dev->channels = apds9999_channels;	// the different channels of the device
+	indio_dev->num_channels = ARRAY_SIZE(apds9960_channels);
 	// TODO add also all the other attributes
 
 
@@ -179,7 +187,7 @@ MODULE_DEVICE_TABLE(i2c, apds9999_idtable);
 
 static struct i2c_driver apds9999_driver = {
       .driver = {
-              .name   = "apds9999",   // this is the drivers name and should match the modules name
+              .name   = APDS9999_DRIVER_NAME,   // this is the drivers name and should match the modules name
       },
 
       .id_table       = apds9999_idtable,
