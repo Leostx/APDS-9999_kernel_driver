@@ -100,6 +100,15 @@ struct apds9999_data {
 	struct iio_dev *indio_dev;
 };
 
+// This is the config structure for the regmap interface, that enables us to easily read and write registers
+static const struct regmap_config apds9999_regmap_config = {
+	.name = "apds9999_regmap",	/* Name, not mandatory, only if we should have multiple regmaps */
+	.reg_bits = 8,				/* Number of bits to address a register - register addresses are 1-byte alligned */
+	.val_bits = 8,				/* Number of bits inside a register */
+	
+	//TODO
+};
+
 // Here we will define all the channels that then get assigned to the iio once created
 static const struct iio_chan_spec apds9999_channels[] = {
 	// all data registers are locked in hardware if i2c is reading from them. 
@@ -141,8 +150,30 @@ static const struct iio_chan_spec apds9999_channels[] = {
 
 }
 
-static int apds9999_read_raw(){
+// This callback gets executed when reading raw or scale from sysfs
+static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec const *chan, int *val, int *val2, long mask){
+	
+	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
+	int ret = -EINVAL;
 
+	switch (mask) {
+		case IIO_CHAN_INFO_RAW:
+			switch (chan->type) {
+				case IIO_PROXIMITY:
+					// TODO setup regmap etc
+					break;
+				case IIO_INTENSITY:
+					// TODO
+					break;
+				default:
+					ret = -EINVAL;
+			}
+			break;
+
+		// TODO other cases such as scale etc
+	}
+
+	return ret;
 }
 
 static const struct iio_info apds9999_info = {
