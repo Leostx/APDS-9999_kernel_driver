@@ -14,7 +14,8 @@
  * - [ ] power management ?
  * - [ ] of_device_id table for device tree compatibility?
  * - [ ] overflow bits of the measurement registers
- * - [ ]
+ * - [ ] implement triggers
+ * - [ ] active_scan_mask
  * - [ ]
  *
  *
@@ -65,6 +66,33 @@
 
 // TODO we may add bitmasks to easily address specific bits in the registers by names
 
+// This sets the endianess by which the iio stores the values in the buffer when scanning the channels
+#define APDS9999_CH_ENDIANNESS IIO_CPU
+
+// this defines the attributes for the scan-type used by the intensity related channels
+#define APDS9999_INTENSITY_SCAN_TYPE {			\	 /* LS resolution: 13 - 20 bit, default 18 bit ( set in LS_MEAS_RATE ) */
+	.sign           = 'u',						\
+	.realbits       = 20,						\
+	.storagebits    = 32,						\
+	.shift          = 0,						\
+	.endianness     = APDS9999_CH_ENDIANNESS,	\
+}	
+
+// This is the channel definition for the intensity channels - parameters are color and scan index
+#define APDS9999_INTENSITY_CHANNEL(_color, _si) { 			\
+	.type           = IIO_INTENSITY,						\
+	.modified       = 1,									\
+	.channel2       = IIO_MOD_LIGHT_##_color,				\
+	.address        = APDS9999_REG_LS_DATA_##_color##_0,	\
+	.scan_index     = _si,									\
+	.scan_type      = APDS9999_INTENSITY_SCAN_TYPE,			\
+	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),			\
+	.info_mask_shared_by_type =	 							\ 	/* the switch case for reading is shared by all channels of the same type - intensity in this case */
+		BIT(IIO_CHAN_INFO_RESOLUTION) |						\	/* the resolution can be set in LS_MEAS_RATE */
+		BIT(IIO_CHAN_INFO_SAMP_FREQ)  |						\	/* the measurement rate can be set in the LS_MEAS_RATE */ 
+		BIT(IIO_CHAN_INFO_SCALE),							\	
+}
+
 
 // This is the type of struct that will eventually hold the data that our driver needs to function
 struct apds9999_data {    
@@ -83,40 +111,32 @@ static const struct iio_chan_spec apds9999_channels[] = {
 		.type           = IIO_PROXIMITY,
 		.address        = APDS9999_REG_PS_DATA_0,
 		/* The following two are for buffer reading, so userspace consumes less cpu when reading the whole sensor continiously */
-		.scan_index     = 0,				/* This defines the order in which channels are placed inside the buffer */			
+		.scan_index     = 0,							/* This defines the order in which channels are placed inside the buffer */			
 		.scan_type      = {
 			.sign           = 'u',
-			.realbits       = 11,			/* TODO should we modify this based on the value set in PS_MEAS_RATE? */
+			.realbits       = 11,						/* TODO should we modify this based on the value set in PS_MEAS_RATE? */
 			.storagebits    = 16,
 			.shift          = 0,
-			.endianness     = IIO_CPU,		/* This refers to the buffer used by the driver */
+			.endianness     = APDS9999_CH_ENDIANNESS,	/* This refers to the buffer used by the driver */
 		},
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),	
-		.info_mask_shared_by_type =
-			BIT(IIO_CHAN_INFO_SCALE) |
-			BIT(IIO_CHAN_INFO_INT_TIME),		/* */
+		.info_mask_shared_by_type = 					
+			BIT(IIO_CHAN_INFO_RESOLUTION) |				/* the resolution can be set in PS_MEAS_RATE */
+			BIT(IIO_CHAN_INFO_SAMP_FREQ),				/* the sampling frequency can be set in the PS_MEAS_RATE */
+			/* TODO PS_PULSES and VCSEL options are missing */
 	},
 
+	APDS9999_INTENSITY_CHANNEL(RED, 1),
+	APDS9999_INTENSITY_CHANNEL(GREEN, 2),
+	APDS9999_INTENSITY_CHANNEL(BLUE, 3),
+	APDS9999_INTENSITY_CHANNEL(IR, 4),
 
-	/* InfraRed Light Sensor (IR - LS) - LS resolution: 13 - 20 bit, default 18 bit ( set in LS_MEAS_RATE ) */
+	/* Ambien Light Sensor (ALS) - This is the same as the green channel, it depends on the configuration */
 	{
-		.type           = IIO_INTENSITY,
-		.modified       = 1,
-		.channel2       = IIO_MOD_LIGHT_IR,
-		.address        = APDS9999_REG_LS_DATA_IR_0,
-		.scan_index     = 2,
-		.scan_type      = {
-			.sign           = 'u',
-			.realbits       = 20,
-			.storagebits    = 32,
-			.shift          = 0,
-			.endianness     = IIO_CPU,
-		},
-		.info_mask_separate     = BIT(IIO_CHAN_INFO_RAW),
-		.info_mask_shared_by_type =				/* the switch case for reading is shared by all channels of the same type - intensity in this case */
-			BIT(IIO_CHAN_INFO_RESOLUTION) |		/* the resolution can be set in LS_MEAS_RES */
-			BIT(IIO_CHAN_INFO_SAMP_FREQ)  |		/* the measurement rate can be set in the LS_MEAS_RES */ 
-			BIT(IIO_CHAN_INFO_SCALE),			/* the gain in settable in the LS_GAIN */
+		.type           = IIO_LIGHT,
+		.scan_index     = 5,
+		.scan_type      = APDS9999_INTENSITY_SCAN_TYPE,
+		.info_mask_separate = BIT(IIO_CHAN_INFO_PROCESSED),	/* TODO adjust this */
 	},
 
 }
@@ -125,7 +145,7 @@ static int apds9999_read_raw(){
 
 }
 
-static const struct iio_info apds9960_info = {
+static const struct iio_info apds9999_info = {
 	.read_raw = apds9999_read_raw,
 	// TODO attributes
 	// TODO writes
@@ -135,7 +155,7 @@ static const struct iio_info apds9960_info = {
 // We can save the i2c_client handle for further use
 static int apds9999_probe(struct i2c_client *client){
 	// data struct that holds the data for out device
-	struct apds9960_data *data;
+	struct apds9999_data *data;
 	// the iio_dev that gets returned when we allocate it with the iio subsystem
 	struct iio_dev *indio_dev;
 	int ret;
@@ -151,13 +171,26 @@ static int apds9999_probe(struct i2c_client *client){
 	
 	// set attributes of the iio_dev
 	indio_dev->name = APDS9999_DRIVER_NAME;
-	indio_dev->info = &apds9960_info;			// hook to the functions to interact with the device
+	indio_dev->info = &apds9999_info;			// hook to the functions to interact with the device
 	indio_dev->channels = apds9999_channels;	// the different channels of the device
-	indio_dev->num_channels = ARRAY_SIZE(apds9960_channels);
-	// TODO add also all the other attributes
+	indio_dev->num_channels = ARRAY_SIZE(apds9999_channels);
+	// These are all the operating modes the device supports
+	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_SOFTWARE | INDIO_EVENT_TRIGGERED; // TODO check if this is actually right
+	// TODO do we need available_scan_masks ?
 
+	// TODO do we have to setup the kernel fifo buffer - devm_iio_kfifo_buffer_setup ?
+
+	// retrive the pointer to the area that got allocated at the end of the iio_dev struct by devm_iio_device_alloc
+	data = iio_priv(indio_dev);
+	// here we save the iio_dev as data into i2c client structure
+	i2c_set_clientdata(client, indio_dev);
 
 	// TODO
+
+	// register the driver for this iio device, return if it fails
+	ret = devm_iio_device_register(indio_dev);
+	if (ret)
+		return ret;
 	
 	println("Hello world from apds9999");
 	return 0;
