@@ -4,7 +4,11 @@
  * Created by lucx & Lstx
  *
  * The sensor has the I2C ID 0x52
- *
+ *	
+ * Terminology:
+ * 	PS: Proximity Sensor
+ * 	LS: Light Sensor
+ * 	ALS: Ambient Light Sensor
  *
  */
 
@@ -16,6 +20,9 @@
  * - [ ] overflow bits of the measurement registers
  * - [ ] implement triggers
  * - [ ] active_scan_mask
+ * - [ ] PS_DATA = PS_MEAS – PS_CAN
+ * - [ ]
+ * - [ ]
  * - [ ]
  *
  *
@@ -24,8 +31,9 @@
 // Driver Name - done as define, since we use it multiple times
 #define APDS9999_DRIVER_NAME 	"apds9999"
 
-// Register definitions for the device - check datasheet for more information
+/* ------------------- REGISTER DEFINES ------------------- */
 
+// Register definitions for the device - check datasheet for more information
 #define APDS9999_REG_MAIN_CTRL         0x00  /* Main control register */
 #define APDS9999_REG_PS_VCSEL          0x01  /* PS VCSEL control register */
 #define APDS9999_REG_PS_PULSES         0x02  /* PS pulses control register */
@@ -66,6 +74,110 @@
 
 // TODO we may add bitmasks to easily address specific bits in the registers by names
 
+// The following bits are the ones inside the MAIN_CTRL
+#define APDS9999_CTRL_SAI_PS     	BIT(6)  /* sleep after interrupt for PS */
+#define APDS9999_CTRL_SAI_LS     	BIT(5)  /* sleep after interrupt for LS */
+#define APDS9999_CTRL_SW_RESET     	BIT(4)  /* software reset */
+#define APDS9999_CTRL_RGB_MODE      BIT(2)  /* 0 = ALS and IR are active. 1 = RGB and IR are active */
+#define APDS9999_CTRL_LS_EN         BIT(1)  /* light sensor enable */
+#define APDS9999_CTRL_PS_EN         BIT(0)  /* proximity enable */
+
+// The following are the bits in PS_VCSEL - writing them restarts the PS state machine // TODO is this relevant? 
+#define APDS9999_PS_VCSEL_FREQ      GENMASK(6, 4)
+#define APDS9999_PS_VCSEL_CURR      GENMASK(2, 0)
+
+/* Possible VCSEL Frequency values  */
+#define APDS9999_PS_VCSEL_FREQ_60kHz 	0b011	/* default */
+#define APDS9999_PS_VCSEL_FREQ_70kHz 	0b100
+#define APDS9999_PS_VCSEL_FREQ_80kHz 	0b101
+#define APDS9999_PS_VCSEL_FREQ_90kHz 	0b110
+#define APDS9999_PS_VCSEL_FREQ_100kHz 	0b111
+
+/* Possible VCSEL Current values  */
+#define APDS9999_PS_VCSEL_CURR_DEF		0b110 	/* default*/	
+#define APDS9999_PS_VCSEL_CURR_10mA		0b010
+#define APDS9999_PS_VCSEL_CURR_25mA		0b011
+
+/*
+ * From the datasheet for PS_MEAS_RATE and LS_MEAS_RATE:
+ * 	When the measurement repeat rate is programmed to be faster than possible for the programmed ADC measurement time, 
+ * 	the repeat rate will be lower than programmed (maximum speed).
+ *
+ * 	Writing to this register stops the ongoing measurements and starts new measurements (depending on the respective enable bits).
+ *
+ */
+
+// The following are the bits in PS_MEAS_RATE
+#define APDS9999_PS_RESO      		GENMASK(4, 3)	/* Proximity Sensor resolution (bits) */
+#define APDS9999_PS_RATE      		GENMASK(2, 0)	/* Proximity Sensor measurement rate (ms) - controls the timing of the periodic measurements of the PS in active mode*/
+
+/* Possible PS Resolution values  */
+#define APDS9999_PS_RESO_8_BIT		0b00	/* default*/
+#define APDS9999_PS_RESO_9_BIT		0b01
+#define APDS9999_PS_RESO_10_BIT		0b10
+#define APDS9999_PS_RESO_11_BIT		0b11
+
+/* Possible PS Measurement rate values  */
+#define APDS9999_PS_RATE_6_2_MS		0b001
+#define APDS9999_PS_RATE_12_5_MS	0b010
+#define APDS9999_PS_RATE_25_MS      0b011
+#define APDS9999_PS_RATE_50_MS      0b100
+#define APDS9999_PS_RATE_100_MS     0b101	/* default */
+#define APDS9999_PS_RATE_200_MS     0b110
+#define APDS9999_PS_RATE_400_MS     0b111
+
+// The following are the bits in LS_MEAS_RATE
+#define APDS9999_LS_RESO      		GENMASK(6, 4)	/* Light Sensor resolution (ms) */
+#define APDS9999_LS_RATE      		GENMASK(2, 0) 	/* Light Sensor measurement rate (ms)*/
+
+/* Possible LS Resolution values  */
+#define APDS9999_LS_RESO_20_BIT_400_MS    0b000
+#define APDS9999_LS_RESO_19_BIT_200_MS    0b001
+#define APDS9999_LS_RESO_18_BIT_100_MS    0b010	/* default */
+#define APDS9999_LS_RESO_17_BIT_50_MS     0b011
+#define APDS9999_LS_RESO_16_BIT_25_MS     0b100
+#define APDS9999_LS_RESO_13_BIT_3_125_MS  0b101
+
+/* Possible LS Measurement rate values  */
+#define APDS9999_LS_RATE_25_MS     0b000
+#define APDS9999_LS_RATE_50_MS     0b001
+#define APDS9999_LS_RATE_100_MS    0b010	/* default */
+#define APDS9999_LS_RATE_200_MS    0b011
+#define APDS9999_LS_RATE_500_MS    0b100
+#define APDS9999_LS_RATE_1000_MS   0b101
+#define APDS9999_LS_RATE_2000_MS   0b110
+
+// The following are the bits in the LS_GAIN
+#define APDS9999_LS_GAIN_RANGE      GENMASK(2, 0) 	/* Writing to this register resets the LS state machine and starts new measurements */
+
+/* Possible LS Gain values */
+#define APDS9999_LS_GAIN_RANGE_1      0b000
+#define APDS9999_LS_GAIN_RANGE_3      0b001	/* default */
+#define APDS9999_LS_GAIN_RANGE_6      0b010
+#define APDS9999_LS_GAIN_RANGE_9      0b011
+#define APDS9999_LS_GAIN_RANGE_18     0b100
+
+// The following are the bits in the PART_ID
+#define APDS9999_ID_PART	   		GENMASK(7, 4)	/* Part number id */
+#define APDS9999_ID_REVI	   		GENMASK(3, 0)	/* revision id */
+
+// The following are the bits in the MAIN_STATUS
+#define APDS9999_STATUS_POS         BIT(5)	/* Power On Status*/
+#define APDS9999_STATUS_LS_INT      BIT(4)	/* interrupt occured for ls*/
+#define APDS9999_STATUS_LS_DATA 	BIT(3)	/* new ls data is ready*/
+#define APDS9999_STATUS_PS_INT      BIT(1)	/* interrupt occured for ps*/
+#define APDS9999_STATUS_PS_DATA 	BIT(0)	/* new ps data is ready*/
+
+
+// The following are the special bits for PS_DATA - regards PS_DATA_1
+#define APDS9999_REG_PS_DATA_1_OVRFLW	BIT(3)	/* does the measurement lie outside of the measurable range */
+
+/* ------------------- END REGISTER DEFINES ------------------- */
+
+
+
+/* ------------------- IIO CHANNEL DEFINES ------------------- */
+
 // This sets the endianess by which the iio stores the values in the buffer when scanning the channels
 #define APDS9999_CH_ENDIANNESS IIO_CPU
 
@@ -93,11 +205,99 @@
 		BIT(IIO_CHAN_INFO_SCALE),							\	
 }
 
+/* ------------------- END IIO CHANNEL DEFINES ------------------- */
 
 // This is the type of struct that will eventually hold the data that our driver needs to function
 struct apds9999_data {    
 	struct i2c_client *client;
 	struct iio_dev *indio_dev;
+};
+
+/* ------------------- REGMAP CONFIG ------------------- */
+
+/* Explenation in the apds9999_regmap_config struct at the end of the section */
+
+static const struct regmap_range apds9999_readable_ranges[] = {
+	regmap_reg_range(APDS9999_REG_MAIN_CTRL, APDS9999_REG_LS_THRES_VAR),
+};
+
+static const struct regmap_access_table apds9999_readable_table = {
+	.yes_ranges	= apds9999_readable_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(apds9999_readable_ranges),
+};
+
+static const struct regmap_range apds9999_writeable_ranges[] = {
+	regmap_reg_range(APDS9999_REG_MAIN_CTRL, APDS9999_REG_LS_GAIN),
+	regmap_reg_range(APDS9999_REG_INT_CFG, APDS9999_REG_LS_THRES_VAR),
+};
+
+static const struct regmap_access_table apds9999_writeable_table = {
+	.yes_ranges	= apds9999_writeable_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(apds9999_writeable_ranges),
+};
+
+// Volatile registers are those that can change without the driver explicitly writing to them
+static const struct regmap_range apds9999_volatile_ranges[] = {
+	regmap_reg_range(APDS9999_REG_PS_DATA_0, APDS9999_REG_LS_DATA_RED_2), /* all data registers are volatile for shure */
+};
+
+static const struct regmap_access_table apds9999_volatile_table = {
+	.yes_ranges	= apds9999_volatile_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(apds9999_volatile_ranges),
+};
+
+// Precious registers are those that can alter hardware states when read
+static const struct regmap_range apds9999_precious_ranges[] = {
+	/*
+	*	APDS9999_REG_MAIN_CTRL:
+	*		when SAI_LS or SAI_PS are set, the LS_EN or PS_EN are cleared when this register is read
+	*
+	*
+	*/
+	regmap_reg_range(APDS9999_REG_MAIN_CTRL, xx),
+};
+
+static const struct regmap_access_table apds9999_precious_table = {
+	.yes_ranges	= apds9999_precious_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(apds9999_precious_ranges),
+};
+
+// Here we set the standard values from the datasheet
+// by doing this we should reduce the startup time since the data does not need to get read at startup
+static const struct reg_default apds9999_reg_defaults[] = {
+	// FIELD_PREP is used to fill just a subset of bits
+
+	{ APDS9999_REG_MAIN_CTRL, 0x00 }, 											/* 0x00 */
+	{ APDS9999_PS_VCSEL, 														/* 0x36 */
+		FIELD_PREP(APDS9999_PS_VCSEL_FREQ, APDS9999_PS_VCSEL_FREQ_60kHz) | 
+		FIELD_PREP(APDS9999_PS_VCSEL_CURR, APDS9999_PS_VCSEL_CURR_DEF) }, 		
+	{ APDS9999_REG_PS_PULSES, 8 }, 												/* 0x08 */
+	{ APDS9999_REG_PS_MEAS_RATE, 												/* 0x05 */
+		FIELD_PREP(APDS9999_PS_RESO, APDS9999_PS_RESO_8_BIT) | 
+		FIELD_PREP(APDS9999_PS_RATE, APDS9999_PS_RATE_100_MS) }, 
+	{ APDS9999_REG_LS_MEAS_RATE, 												/* 0x22 */ 
+		FIELD_PREP(APDS9999_LS_RESO, APDS9999_LS_RESO_18_BIT_100_MS) | 
+		FIELD_PREP(APDS9999_LS_RATE, APDS9999_LS_RATE_100_MS) }, 
+	{ APDS9999_REG_LS_GAIN, 													/* 0x01 */
+		FIELD_PREP(APDS9999_LS_GAIN_RANGE, APDS9999_LS_GAIN_RANGE_3) },	 
+	{ APDS9999_REG_PART_ID, 0xC2 },												/* 0xc2 */ 
+	{ APDS9999_REG_MAIN_STATUS, 												/* 0x20 */
+		FIELD_PREP(APDS9999_STATUS_POS, 1) },	 
+	{ APDS9999_REG_PS_DATA_0, 0x00 },											/* 0x00 */ 
+	{ APDS9999_REG_PS_DATA_1,        0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_IR_0,     0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_IR_1,     0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_IR_2,     0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_GREEN_0,  0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_GREEN_1,  0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_GREEN_2,  0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_BLUE_0,   0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_BLUE_1,   0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_BLUE_2,   0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_RED_0,    0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_RED_1,    0x00 },									/* 0x00 */
+	{ APDS9999_REG_LS_DATA_RED_2,    0x00 },									/* 0x00 */
+
 };
 
 // This is the config structure for the regmap interface, that enables us to easily read and write registers
@@ -106,8 +306,12 @@ static const struct regmap_config apds9999_regmap_config = {
 	.reg_bits = 8,				/* Number of bits to address a register - register addresses are 1-byte alligned */
 	.val_bits = 8,				/* Number of bits inside a register */
 	
+	.rd_table = &apds9999_readable_table,		/* This defines the range of registers that are readable (all) */
+	.wr_table = &apds9999_writeable_table,		/* This defines the two ranges of registers that are writable */
 	//TODO
 };
+
+/* ------------------- END REGMAP CONFIG ------------------- */
 
 // Here we will define all the channels that then get assigned to the iio once created
 static const struct iio_chan_spec apds9999_channels[] = {
