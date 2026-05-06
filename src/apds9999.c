@@ -72,7 +72,8 @@
 #define APDS9999_REG_LS_THRES_LOW_2    0x26  /* LS lower threshold high byte */
 #define APDS9999_REG_LS_THRES_VAR      0x27  /* LS variance threshold */
 
-// TODO we may add bitmasks to easily address specific bits in the registers by names
+
+/* Following are the bitmasks for certain registers, since different bits have different functionality */
 
 // The following bits are the ones inside the MAIN_CTRL
 #define APDS9999_CTRL_SAI_PS     	BIT(6)  /* sleep after interrupt for PS */
@@ -172,6 +173,78 @@
 // The following are the special bits for PS_DATA - regards PS_DATA_1
 #define APDS9999_REG_PS_DATA_1_OVRFLW	BIT(3)	/* does the measurement lie outside of the measurable range */
 
+// The following are the bits for the INT_CFG
+#define APDS9999_INT_CFG_LS_INT_SEL			 GENMASK(5, 4)
+#define APDS9999_INT_CFG_LS_VAR_MODE         BIT(3)  /* LS interrupt mode: 0=threshold, 1=variation */
+#define APDS9999_INT_CFG_LS_INT_EN           BIT(2)  /* LS interrupt enabled */
+#define APDS9999_INT_CFG_PS_LOGIC_MODE       BIT(1)  /* 0=INT signal is active until status is cleared, 1=INT updated after every measurement */
+#define APDS9999_INT_CFG_PS_INT_EN           BIT(0)  /* PS interrupt enabled */
+
+/* Possible INT_CFG LS_INT_SEL values */
+#define APDS9999_INT_CFG_LS_INT_SEL_IR			0b00
+#define APDS9999_INT_CFG_LS_INT_SEL_GREEN_ALS	0b01	/* default */
+#define APDS9999_INT_CFG_LS_INT_SEL_RED			0b10
+#define APDS9999_INT_CFG_LS_INT_SEL_BLUE		0b11
+
+
+// The following are the bits for the INT_PST
+/* sets the number of similar consecutive ints, before the int is asserted */
+#define APDS9999_INT_PST_LS_PERS			 GENMASK(7, 4)
+#define APDS9999_INT_PST_PS_PERS			 GENMASK(3, 0)
+
+// TODO thresholds etc
+
+/* DEFINE DEFAULT VALUES - taken from the datasheet */
+// FIELD_PREP is used to fill just a subset of bits
+
+#define APDS9999_REG_MAIN_CTRL_DEF              0x00 											/* 0x00 */
+#define APDS9999_REG_PS_VCSEL_DEF				\												/* 0x36 */
+			FIELD_PREP(APDS9999_PS_VCSEL_FREQ, APDS9999_PS_VCSEL_FREQ_60kHz) | \
+			FIELD_PREP(APDS9999_PS_VCSEL_CURR, APDS9999_PS_VCSEL_CURR_DEF) 
+#define APDS9999_REG_PS_PULSES_DEF				0x08 											/* 0x08 */
+#define APDS9999_REG_PS_MEAS_RATE_DEF 			\												/* 0x05 */
+		FIELD_PREP(APDS9999_PS_RESO, APDS9999_PS_RESO_8_BIT) | \
+		FIELD_PREP(APDS9999_PS_RATE, APDS9999_PS_RATE_100_MS)
+#define APDS9999_REG_LS_MEAS_RATE_DEF			\												/* 0x22 */ 
+		FIELD_PREP(APDS9999_LS_RESO, APDS9999_LS_RESO_18_BIT_100_MS) | 
+		FIELD_PREP(APDS9999_LS_RATE, APDS9999_LS_RATE_100_MS) 
+#define APDS9999_REG_LS_GAIN_DEF				\												/* 0x01 */
+			FIELD_PREP(APDS9999_LS_GAIN_RANGE, APDS9999_LS_GAIN_RANGE_3)
+#define APDS9999_REG_PART_ID_DEF				0xC2 											/* 0xc2 */
+#define APDS9999_REG_MAIN_STATUS_DEF			\												/* 0x20 */
+			FIELD_PREP(APDS9999_STATUS_POS, 1)
+#define APDS9999_REG_PS_DATA_0_DEF				0x00 											/* 0x00 */
+#define APDS9999_REG_PS_DATA_1_DEF              0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_IR_0_DEF           0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_IR_1_DEF           0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_IR_2_DEF           0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_GREEN_0_DEF        0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_GREEN_1_DEF        0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_GREEN_2_DEF        0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_BLUE_0_DEF         0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_BLUE_1_DEF         0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_BLUE_2_DEF         0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_RED_0_DEF          0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_RED_1_DEF          0x00 											/* 0x00 */
+#define APDS9999_REG_LS_DATA_RED_2_DEF          0x00 											/* 0x00 */
+#define APDS9999_REG_INT_CFG_DEF				\												/* 0x10 */
+			FIELD_PREP(APDS9999_INT_CFG_LS_INT_SEL, APDS9999_INT_CFG_LS_INT_SEL_GREEN_ALS) 
+#define APDS9999_REG_INT_PST_DEF          		0x00 											/* 0x00 */
+#define APDS9999_REG_PS_THRES_UP_0_DEF
+#define APDS9999_REG_PS_THRES_UP_1_DEF
+#define APDS9999_REG_PS_THRES_LOW_0_DEF
+#define APDS9999_REG_PS_THRES_LOW_1_DEF
+#define APDS9999_REG_PS_CAN_0_DEF
+#define APDS9999_REG_PS_CAN_1_DEF
+#define APDS9999_REG_LS_THRES_UP_0_DEF
+#define APDS9999_REG_LS_THRES_UP_1_DEF
+#define APDS9999_REG_LS_THRES_UP_2_DEF
+#define APDS9999_REG_LS_THRES_LOW_0_DEF
+#define APDS9999_REG_LS_THRES_LOW_1_DEF
+#define APDS9999_REG_LS_THRES_LOW_2_DEF
+#define APDS9999_REG_LS_THRES_VAR_DEF
+
+
 /* ------------------- END REGISTER DEFINES ------------------- */
 
 
@@ -211,6 +284,7 @@
 struct apds9999_data {    
 	struct i2c_client *client;
 	struct iio_dev *indio_dev;
+	struct regmap *regmap;
 };
 
 /* ------------------- REGMAP CONFIG ------------------- */
@@ -238,6 +312,7 @@ static const struct regmap_access_table apds9999_writeable_table = {
 
 // Volatile registers are those that can change without the driver explicitly writing to them
 static const struct regmap_range apds9999_volatile_ranges[] = {
+	regmap_reg_range(APDS9999_REG_MAIN_STATUS, APDS9999_REG_MAIN_STATUS), /* main status chanegs on int or data ready */
 	regmap_reg_range(APDS9999_REG_PS_DATA_0, APDS9999_REG_LS_DATA_RED_2), /* all data registers are volatile for shure */
 };
 
@@ -251,10 +326,8 @@ static const struct regmap_range apds9999_precious_ranges[] = {
 	/*
 	*	APDS9999_REG_MAIN_CTRL:
 	*		when SAI_LS or SAI_PS are set, the LS_EN or PS_EN are cleared when this register is read
-	*
-	*
 	*/
-	regmap_reg_range(APDS9999_REG_MAIN_CTRL, xx),
+	regmap_reg_range(APDS9999_REG_MAIN_CTRL, APDS9999_REG_MAIN_CTRL),
 };
 
 static const struct regmap_access_table apds9999_precious_table = {
@@ -262,41 +335,47 @@ static const struct regmap_access_table apds9999_precious_table = {
 	.n_yes_ranges	= ARRAY_SIZE(apds9999_precious_ranges),
 };
 
-// Here we set the standard values from the datasheet
-// by doing this we should reduce the startup time since the data does not need to get read at startup
-static const struct reg_default apds9999_reg_defaults[] = {
-	// FIELD_PREP is used to fill just a subset of bits
 
-	{ APDS9999_REG_MAIN_CTRL, 0x00 }, 											/* 0x00 */
-	{ APDS9999_PS_VCSEL, 														/* 0x36 */
-		FIELD_PREP(APDS9999_PS_VCSEL_FREQ, APDS9999_PS_VCSEL_FREQ_60kHz) | 
-		FIELD_PREP(APDS9999_PS_VCSEL_CURR, APDS9999_PS_VCSEL_CURR_DEF) }, 		
-	{ APDS9999_REG_PS_PULSES, 8 }, 												/* 0x08 */
-	{ APDS9999_REG_PS_MEAS_RATE, 												/* 0x05 */
-		FIELD_PREP(APDS9999_PS_RESO, APDS9999_PS_RESO_8_BIT) | 
-		FIELD_PREP(APDS9999_PS_RATE, APDS9999_PS_RATE_100_MS) }, 
-	{ APDS9999_REG_LS_MEAS_RATE, 												/* 0x22 */ 
-		FIELD_PREP(APDS9999_LS_RESO, APDS9999_LS_RESO_18_BIT_100_MS) | 
-		FIELD_PREP(APDS9999_LS_RATE, APDS9999_LS_RATE_100_MS) }, 
-	{ APDS9999_REG_LS_GAIN, 													/* 0x01 */
-		FIELD_PREP(APDS9999_LS_GAIN_RANGE, APDS9999_LS_GAIN_RANGE_3) },	 
-	{ APDS9999_REG_PART_ID, 0xC2 },												/* 0xc2 */ 
-	{ APDS9999_REG_MAIN_STATUS, 												/* 0x20 */
-		FIELD_PREP(APDS9999_STATUS_POS, 1) },	 
-	{ APDS9999_REG_PS_DATA_0, 0x00 },											/* 0x00 */ 
-	{ APDS9999_REG_PS_DATA_1,        0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_IR_0,     0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_IR_1,     0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_IR_2,     0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_GREEN_0,  0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_GREEN_1,  0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_GREEN_2,  0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_BLUE_0,   0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_BLUE_1,   0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_BLUE_2,   0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_RED_0,    0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_RED_1,    0x00 },									/* 0x00 */
-	{ APDS9999_REG_LS_DATA_RED_2,    0x00 },									/* 0x00 */
+// Here we set the default register values. By doing this we should reduce the startup time since the data does not need to get read at startup
+static const struct reg_default apds9999_reg_defaults[] = {
+
+	{ APDS9999_REG_MAIN_CTRL, APDS9999_REG_MAIN_CTRL_DEF },
+	{ APDS9999_REG_PS_VCSEL, APDS9999_REG_PS_VCSEL_DEF },
+	{ APDS9999_REG_PS_PULSES, APDS9999_REG_PS_PULSES_DEF },
+	{ APDS9999_REG_PS_MEAS_RATE, APDS9999_REG_PS_MEAS_RATE_DEF },
+	{ APDS9999_REG_LS_MEAS_RATE, APDS9999_REG_LS_MEAS_RATE_DEF },
+	{ APDS9999_REG_LS_GAIN, APDS9999_REG_LS_GAIN_DEF },
+	{ APDS9999_REG_PART_ID, APDS9999_REG_PART_ID_DEF },
+	{ APDS9999_REG_MAIN_STATUS, APDS9999_REG_MAIN_STATUS_DEF },
+	{ APDS9999_REG_PS_DATA_0, APDS9999_REG_PS_DATA_0_DEF },
+	{ APDS9999_REG_PS_DATA_1, APDS9999_REG_PS_DATA_1_DEF },
+	{ APDS9999_REG_LS_DATA_IR_0, APDS9999_REG_LS_DATA_IR_0_DEF },
+	{ APDS9999_REG_LS_DATA_IR_1, APDS9999_REG_LS_DATA_IR_1_DEF },
+	{ APDS9999_REG_LS_DATA_IR_2, APDS9999_REG_LS_DATA_IR_2_DEF },
+	{ APDS9999_REG_LS_DATA_GREEN_0, APDS9999_REG_LS_DATA_GREEN_0_DEF },
+	{ APDS9999_REG_LS_DATA_GREEN_1, APDS9999_REG_LS_DATA_GREEN_1_DEF },
+	{ APDS9999_REG_LS_DATA_GREEN_2, APDS9999_REG_LS_DATA_GREEN_2_DEF },
+	{ APDS9999_REG_LS_DATA_BLUE_0, APDS9999_REG_LS_DATA_BLUE_0_DEF },
+	{ APDS9999_REG_LS_DATA_BLUE_1, APDS9999_REG_LS_DATA_BLUE_1_DEF },
+	{ APDS9999_REG_LS_DATA_BLUE_2, APDS9999_REG_LS_DATA_BLUE_2_DEF },
+	{ APDS9999_REG_LS_DATA_RED_0, APDS9999_REG_LS_DATA_RED_0_DEF },
+	{ APDS9999_REG_LS_DATA_RED_1, APDS9999_REG_LS_DATA_RED_1_DEF },
+	{ APDS9999_REG_LS_DATA_RED_2, APDS9999_REG_LS_DATA_RED_2_DEF },
+	{ APDS9999_REG_INT_CFG, APDS9999_REG_INT_CFG_DEF },
+	{ APDS9999_REG_INT_PST, APDS9999_REG_INT_PST_DEF },
+	{ APDS9999_REG_PS_THRES_UP_0, APDS9999_REG_PS_THRES_UP_0_DEF },
+	{ APDS9999_REG_PS_THRES_UP_1, APDS9999_REG_PS_THRES_UP_1_DEF },
+	{ APDS9999_REG_PS_THRES_LOW_0, APDS9999_REG_PS_THRES_LOW_0_DEF },
+	{ APDS9999_REG_PS_THRES_LOW_1, APDS9999_REG_PS_THRES_LOW_1_DEF },
+	{ APDS9999_REG_PS_CAN_0, APDS9999_REG_PS_CAN_0_DEF },
+	{ APDS9999_REG_PS_CAN_1, APDS9999_REG_PS_CAN_1_DEF },
+	{ APDS9999_REG_LS_THRES_UP_0, APDS9999_REG_LS_THRES_UP_0_DEF },
+	{ APDS9999_REG_LS_THRES_UP_1, APDS9999_REG_LS_THRES_UP_1_DEF },
+	{ APDS9999_REG_LS_THRES_UP_2, APDS9999_REG_LS_THRES_UP_2_DEF },
+	{ APDS9999_REG_LS_THRES_LOW_0, APDS9999_REG_LS_THRES_LOW_0_DEF },
+	{ APDS9999_REG_LS_THRES_LOW_1, APDS9999_REG_LS_THRES_LOW_1_DEF },
+	{ APDS9999_REG_LS_THRES_LOW_2, APDS9999_REG_LS_THRES_LOW_2_DEF },
+	{ APDS9999_REG_LS_THRES_VAR, APDS9999_REG_LS_THRES_VAR_DEF },
 
 };
 
@@ -308,7 +387,17 @@ static const struct regmap_config apds9999_regmap_config = {
 	
 	.rd_table = &apds9999_readable_table,		/* This defines the range of registers that are readable (all) */
 	.wr_table = &apds9999_writeable_table,		/* This defines the two ranges of registers that are writable */
-	//TODO
+	
+    .volatile_table = &volatile_range_cfg,		/* These registers change on hardware events */
+    .precious_table = &precious_range_cfg,		/* These registers change hardware on reads */
+	
+	.reg_defaults = apds9999_reg_defaults,		/* default values of the registers */
+    .num_reg_defaults = ARRAY_SIZE(apds9999_reg_defaults),
+
+	.max_register = APDS9999_REG_LS_THRES_VAR,
+	.cache_type = REGCACHE_MAPLE,				/* this is the type of cache. Seems the best tradeoff */
+	
+	//TODO maybe wee want to add ranges for the consecutive reads
 };
 
 /* ------------------- END REGMAP CONFIG ------------------- */
@@ -355,8 +444,20 @@ static const struct iio_chan_spec apds9999_channels[] = {
 }
 
 // This callback gets executed when reading raw or scale from sysfs
+/*
+ * indio_dev: 		iio device
+ * iio_chan_spec: 	specs for the channel that is beeing read
+ * val:			primary read value
+ * val2:		secondary read value
+ * mask:		bitmask, which type of value is beeing requested
+*/
 static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec const *chan, int *val, int *val2, long mask){
-	
+	// retrive the pointer to the data that is associated with our iio device
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	// variable to hold the PS/LS settings
+	unsigned int setting;
+
 	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
 	int ret = -EINVAL;
 
@@ -364,10 +465,47 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 		case IIO_CHAN_INFO_RAW:
 			switch (chan->type) {
 				case IIO_PROXIMITY:
-					// TODO setup regmap etc
+					// regmap_reads takes the regmap, the register and a pointer to store the value there
+					ret = regmap_read(data->regmap, APDS9999_REG_PS_MEAS_RATE, *setting);
+					// if regmap reading the settings failed, return early with the error code
+					if(ret){
+						dev_err(indio_dev, "regmap reading ps resolution failed.\n");
+						return ret;
+					}
+
+					// extract the resolution fields from the read register
+					setting = FIELD_GET(APDS9999_PS_RESO, setting);
+
+					// if the resolution is smaller or eqaul to n-bits, read a single register, otherwise read both
+					if(setting <= APDS9999_PS_RESO_8_BIT){
+						ret = regmap_read(data->regmap, chan->address, val);
+					}else {
+						// little endian 16-bit value is to buffer our 2-register read
+						__le16 buf;
+						// regmap bulk read takes the number of bytes to read as the last argument
+						ret = regmap_bulk_read(data->regmap, chan->address, &buf, 2);
+						// convert the final value to cpu endianness and save it in val 
+						*val = le16_to_cpu(regs);
+					}
+
+					// if ret is 0, everything went fine. Inform the caller that we read an int
+					if (!ret)
+						ret = IIO_VAL_INT;
 					break;
 				case IIO_INTENSITY:
-					// TODO
+					// TODO check if this works also on lower resolution settings or if we get spurios MSBs
+
+					// little endian 32-bit value is to buffer our 3-register read
+					__le32 buf;
+					// regmap bulk read takes the number of bytes to read as the last argument
+					ret = regmap_bulk_read(data->regmap, chan->address, &buf, 3);
+					// convert the final value to cpu endianness and save it in val 
+					*val = le32_to_cpu(regs);
+					
+
+					// if ret is 0, everything went fine. Inform the caller that we read an int
+					if (!ret)
+						ret = IIO_VAL_INT;
 					break;
 				default:
 					ret = -EINVAL;
@@ -420,6 +558,19 @@ static int apds9999_probe(struct i2c_client *client){
 	// here we save the iio_dev as data into i2c client structure
 	i2c_set_clientdata(client, indio_dev);
 
+	// we init our regmap for our i2c client - devm still cause we want it managed
+	data->regmap = devm_regmap_init_i2c(client, &apds9999_regmap_config);
+	// errors get encoded in the upper address space, since they are small numbers. This macro checks for error
+	if (IS_ERR(data->regmap)) {
+		// log to kernel error log if init failed
+		dev_err(&client->dev, "regmap init failed.\n");
+		// this macro extracts the error
+		return PTR_ERR(data->regmap);
+	}
+
+	data->client = client;
+	data->indio_dev = indio_dev;
+
 	// TODO
 
 	// register the driver for this iio device, return if it fails
@@ -427,7 +578,7 @@ static int apds9999_probe(struct i2c_client *client){
 	if (ret)
 		return ret;
 	
-	println("Hello world from apds9999");
+	dev_info("Hello world from apds9999");
 	return 0;
 }
 
@@ -439,7 +590,7 @@ static int apds9999_remove(struct i2c_client *client){
 	// Not sure if we will need this. From a sensor perspective as well as from a kernel one.
 	
 	// TODO
-	println("Goodbye world from apds9999");
+	dev_info("Goodbye world from apds9999");
 	return 0;	
 }
 
