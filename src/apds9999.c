@@ -21,6 +21,8 @@
  * - [ ] implement triggers
  * - [ ] active_scan_mask
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
+ * - [ ] thresholds
+ * - [ ] ps scale
  * - [ ]
  * - [ ]
  * - [ ]
@@ -119,7 +121,7 @@
 #define APDS9999_PS_RESO_11_BIT		0b11
 
 /* Possible PS Measurement rate values  */
-#define APDS9999_PS_RATE_6_2_MS		0b001
+#define APDS9999_PS_RATE_6_25_MS	0b001
 #define APDS9999_PS_RATE_12_5_MS	0b010
 #define APDS9999_PS_RATE_25_MS      0b011
 #define APDS9999_PS_RATE_50_MS      0b100
@@ -230,23 +232,22 @@
 #define APDS9999_REG_INT_CFG_DEF				\												/* 0x10 */
 			FIELD_PREP(APDS9999_INT_CFG_LS_INT_SEL, APDS9999_INT_CFG_LS_INT_SEL_GREEN_ALS) 
 #define APDS9999_REG_INT_PST_DEF          		0x00 											/* 0x00 */
-#define APDS9999_REG_PS_THRES_UP_0_DEF
-#define APDS9999_REG_PS_THRES_UP_1_DEF
-#define APDS9999_REG_PS_THRES_LOW_0_DEF
-#define APDS9999_REG_PS_THRES_LOW_1_DEF
-#define APDS9999_REG_PS_CAN_0_DEF
-#define APDS9999_REG_PS_CAN_1_DEF
-#define APDS9999_REG_LS_THRES_UP_0_DEF
-#define APDS9999_REG_LS_THRES_UP_1_DEF
-#define APDS9999_REG_LS_THRES_UP_2_DEF
-#define APDS9999_REG_LS_THRES_LOW_0_DEF
-#define APDS9999_REG_LS_THRES_LOW_1_DEF
-#define APDS9999_REG_LS_THRES_LOW_2_DEF
-#define APDS9999_REG_LS_THRES_VAR_DEF
+#define APDS9999_REG_PS_THRES_UP_0_DEF			0xFF											/* 0xff */
+#define APDS9999_REG_PS_THRES_UP_1_DEF			0x07											/* 0x07 */
+#define APDS9999_REG_PS_THRES_LOW_0_DEF			0x00 											/* 0x00 */
+#define APDS9999_REG_PS_THRES_LOW_1_DEF			0x00 											/* 0x00 */
+#define APDS9999_REG_PS_CAN_0_DEF				0x00 											/* 0x00 */
+#define APDS9999_REG_PS_CAN_1_DEF				0x00 											/* 0x00 */
+#define APDS9999_REG_LS_THRES_UP_0_DEF			0xFF											/* 0xff */
+#define APDS9999_REG_LS_THRES_UP_1_DEF			0xFF											/* 0xff */
+#define APDS9999_REG_LS_THRES_UP_2_DEF			0x0F											/* 0x0f */
+#define APDS9999_REG_LS_THRES_LOW_0_DEF			0x00 											/* 0x00 */
+#define APDS9999_REG_LS_THRES_LOW_1_DEF			0x00 											/* 0x00 */
+#define APDS9999_REG_LS_THRES_LOW_2_DEF			0x00 											/* 0x00 */
+#define APDS9999_REG_LS_THRES_VAR_DEF			0x00 											/* 0x00 */
 
 
 /* ------------------- END REGISTER DEFINES ------------------- */
-
 
 
 /* ------------------- IIO CHANNEL DEFINES ------------------- */
@@ -275,7 +276,8 @@
 	.info_mask_shared_by_type =	 							\ 	/* the switch case for reading is shared by all channels of the same type - intensity in this case */
 		BIT(IIO_CHAN_INFO_RESOLUTION) |						\	/* the resolution can be set in LS_MEAS_RATE */
 		BIT(IIO_CHAN_INFO_SAMP_FREQ)  |						\	/* the measurement rate can be set in the LS_MEAS_RATE */ 
-		BIT(IIO_CHAN_INFO_SCALE),							\	
+		BIT(IIO_CHAN_INFO_HARDWAREGAIN) |					\	/* the gain can be set in LS_GAIN */
+		BIT(IIO_CHAN_INFO_PROCESSED),
 }
 
 /* ------------------- END IIO CHANNEL DEFINES ------------------- */
@@ -285,6 +287,18 @@ struct apds9999_data {
 	struct i2c_client *client;
 	struct iio_dev *indio_dev;
 	struct regmap *regmap;
+};
+
+// This table is for converting the light sensor readings to lux values - this comes from the datasheet
+// Resolution (lux/count) indexed by [gain][resolution]
+// Gain indices: 0=1x, 1=3x, 2=6x, 3=9x, 4=18x
+// Resolution indices: 0=20bit, 1=19bit, 2=18bit, 3=17bit, 4=16bit
+static const float ls_lux_conversion_map[5][5] = {
+    { 0.136, 0.273, 0.548, 1.099, 2.193 }, 			/* 1x   */
+    { 0.045, 0.090, 0.180, 0.359, 0.722 }, 			/* 3x   */
+    { 0.022, 0.045, 0.090, 0.179, 0.360 }, 			/* 6x   */
+    { 0.015, 0.030, 0.059, 0.119, 0.239 }, 			/* 9x   */
+    { 0.007, 0.015, 0.029, 0.059, 0.117 }, 			/* 18x  */
 };
 
 /* ------------------- REGMAP CONFIG ------------------- */
@@ -424,8 +438,9 @@ static const struct iio_chan_spec apds9999_channels[] = {
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),	
 		.info_mask_shared_by_type = 					
 			BIT(IIO_CHAN_INFO_RESOLUTION) |				/* the resolution can be set in PS_MEAS_RATE */
-			BIT(IIO_CHAN_INFO_SAMP_FREQ),				/* the sampling frequency can be set in the PS_MEAS_RATE */
-			/* TODO PS_PULSES and VCSEL options are missing */
+			BIT(IIO_CHAN_INFO_SAMP_FREQ)  |				/* the sampling frequency can be set in the PS_MEAS_RATE */
+			BIT(IIO_CHAN_INFO_OFFSET),					/* This is for PS_CAN */
+			/* TODO PS_PULSES and PS_VCSEL options are missing */
 	},
 
 	APDS9999_INTENSITY_CHANNEL(RED, 1),
@@ -443,6 +458,66 @@ static const struct iio_chan_spec apds9999_channels[] = {
 
 }
 
+// this function reads the raw value from the proximity sensor into val
+static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address, int *val){
+	// variable to hold the resolution setting
+	unsigned int setting;
+	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
+	int ret = -EINVAL;
+
+	// regmap_reads takes the regmap, the register and a pointer to store the value there
+	ret = regmap_read(data->regmap, APDS9999_REG_PS_MEAS_RATE, *setting);
+	// if regmap reading the settings failed, return early with the error code
+	if(ret){
+		dev_err(indio_dev, "regmap reading ps resolution failed.\n");
+		return ret;
+	}
+
+	// extract the resolution fields from the read register
+	setting = FIELD_GET(APDS9999_PS_RESO, setting);
+
+	// if the resolution is smaller or eqaul to n-bits, read a single register, otherwise read both
+	if(setting <= APDS9999_PS_RESO_8_BIT){
+		ret = regmap_read(data->regmap, address, val);
+	}else {
+		// little endian 16-bit value is to buffer our 2-register read
+		__le16 regs;
+		// regmap bulk read takes the number of bytes to read as the last argument
+		ret = regmap_bulk_read(data->regmap, address, &regs, 2);
+		// convert the final value to cpu endianness and save it in val 
+		*val = le16_to_cpu(regs);
+	}
+
+	// if ret is 0, everything went fine. Inform the caller that we read an int
+	if (!ret)
+		ret = IIO_VAL_INT;
+
+	return ret;
+}
+
+
+// this function reads the raw value from the light sensor into val
+static int apds9999_read_ls_raw(struct apds9999_data *data, unsigned int address, int *val){
+	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
+	int ret = -EINVAL;
+
+	// TODO check if this works also on lower resolution settings or if we get spurios MSBs
+
+	// little endian 32-bit value is to buffer our 3-register read
+	__le32 buf;
+	// regmap bulk read takes the number of bytes to read as the last argument
+	ret = regmap_bulk_read(data->regmap, chan->address, &buf, 3);
+	// convert the final value to cpu endianness and save it in val 
+	*val = le32_to_cpu(regs);
+	
+
+	// if ret is 0, everything went fine. Inform the caller that we read an int
+	if (!ret)
+		ret = IIO_VAL_INT;
+
+	return ret;
+}
+
 // This callback gets executed when reading raw or scale from sysfs
 /*
  * indio_dev: 		iio device
@@ -455,8 +530,6 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 	// retrive the pointer to the data that is associated with our iio device
 	struct apds9999_data *data = iio_priv(indio_dev);
 
-	// variable to hold the PS/LS settings
-	unsigned int setting;
 
 	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
 	int ret = -EINVAL;
@@ -465,54 +538,204 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 		case IIO_CHAN_INFO_RAW:
 			switch (chan->type) {
 				case IIO_PROXIMITY:
-					// regmap_reads takes the regmap, the register and a pointer to store the value there
-					ret = regmap_read(data->regmap, APDS9999_REG_PS_MEAS_RATE, *setting);
-					// if regmap reading the settings failed, return early with the error code
-					if(ret){
-						dev_err(indio_dev, "regmap reading ps resolution failed.\n");
-						return ret;
-					}
-
-					// extract the resolution fields from the read register
-					setting = FIELD_GET(APDS9999_PS_RESO, setting);
-
-					// if the resolution is smaller or eqaul to n-bits, read a single register, otherwise read both
-					if(setting <= APDS9999_PS_RESO_8_BIT){
-						ret = regmap_read(data->regmap, chan->address, val);
-					}else {
-						// little endian 16-bit value is to buffer our 2-register read
-						__le16 buf;
-						// regmap bulk read takes the number of bytes to read as the last argument
-						ret = regmap_bulk_read(data->regmap, chan->address, &buf, 2);
-						// convert the final value to cpu endianness and save it in val 
-						*val = le16_to_cpu(regs);
-					}
-
-					// if ret is 0, everything went fine. Inform the caller that we read an int
-					if (!ret)
-						ret = IIO_VAL_INT;
+					ret = apds9999_read_ps_raw(data, chan->address, val);
 					break;
 				case IIO_INTENSITY:
-					// TODO check if this works also on lower resolution settings or if we get spurios MSBs
-
-					// little endian 32-bit value is to buffer our 3-register read
-					__le32 buf;
-					// regmap bulk read takes the number of bytes to read as the last argument
-					ret = regmap_bulk_read(data->regmap, chan->address, &buf, 3);
-					// convert the final value to cpu endianness and save it in val 
-					*val = le32_to_cpu(regs);
-					
-
-					// if ret is 0, everything went fine. Inform the caller that we read an int
-					if (!ret)
-						ret = IIO_VAL_INT;
+					ret = apds9999_read_ls_raw(data, chan->address, val);
 					break;
 				default:
 					ret = -EINVAL;
 			}
 			break;
+		case IIO_CHAN_INFO_PROCESSED:
+			switch (chan->type) {
+				case IIO_INTENSITY:
+					// variable to hold the resolution setting
+					unsigned int reso;
+					// variable to hold the gain setting
+					unsigned int gain;
 
+
+					// regmap_reads takes the regmap, the register and a pointer to store the value there
+					ret = regmap_read(data->regmap, APDS9999_REG_LS_MEAS_RATE, *reso);
+					// if regmap reading the settings failed, return early with the error code
+					if(ret){
+						dev_err(indio_dev, "regmap reading ls resolution failed.\n");
+						return ret;
+					}
+					// regmap_reads takes the regmap, the register and a pointer to store the value there
+					ret = regmap_read(data->regmap, APDS9999_REG_LS_GAIN, *gain);
+					// if regmap reading the settings failed, return early with the error code
+					if(ret){
+						dev_err(indio_dev, "regmap reading ls gain failed.\n");
+						return ret;
+					}
+
+					// extract the resolution fields from the read register
+					reso = FIELD_GET(APDS9999_LS_RESO, reso);
+					// extract the resolution fields from the read register
+					gain = FIELD_GET(APDS9999_LS_GAIN_RANGE, gain);
+
+					if(reso == APDS9999_LS_RESO_13_BIT_3_125_MS){
+						dev_err(indio_dev, "13-bit ls resolution has no scaling factor. \n");
+						return ret;
+					}
+
+					// here we read the raw ls value into val
+					ret = apds9999_read_ls_raw(data, chan->address, val);
+					// here we scale the val by a constant we retrieve from the map based on gain and resolution
+					*val = &val * ls_lux_conversion_map[gain][reso];
+			}
+			break;
+			
 		// TODO other cases such as scale etc
+	}
+
+	return ret;
+}
+
+static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec const *chan, int val, int val2, long mask){
+	// retrive the pointer to the data that is associated with our iio device
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	// this is the value that gets actually written to the register
+	int to_write;
+
+	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
+	int ret = -EINVAL;
+
+	switch (mask) {
+		case IIO_CHAN_INFO_RESOLUTION:
+			switch (chan->type) {
+				case IIO_PROXIMITY:
+					if (val < 8 || val > 11){
+						dev_err(indio_dev, "proximity sensor resolution should be between 8 and 11 bit.\n");
+						return ret;
+					}
+
+					// from the datasheet we get, that we just have option 0-3
+					to_write = val - 8;
+					// this performs a read, modify, write cycle
+					/* regmap, register to write, mask to use, what to write */
+					ret = regmap_update_bits(data->regmap, APDS9999_REG_PS_MEAS_RATE, APDS9999_PS_RESO, to_write);
+					if(ret){
+						dev_err(indio_dev, "failed updating proximity sensor resolution.\n");
+						return ret;
+					}
+
+					break;				
+				case IIO_INTENSITY:
+					if (val < 13 || val > 20){
+						dev_err(indio_dev, "light sensor resolution should be between 13 and 20 bit.\n");
+						return ret;
+					}
+
+					// from the datasheet we get, that we just have option 0-5. They are linera, with a jump. Option with id 5 is actually 13 bit
+					if(val == 13){
+						to_write = 5 
+					}else{
+						to_write = 20 - val;
+					}
+					// this performs a read, modify, write cycle
+					/* regmap, register to write, mask to use, what to write */
+					ret = regmap_update_bits(data->regmap, APDS9999_REG_LS_MEAS_RATE, APDS9999_LS_RESO, to_write);
+					if(ret){
+						dev_err(indio_dev, "failed updating light sensor resolution.\n");
+						return ret;
+					}
+
+					break;				
+				default:
+					return -EINVAL;
+			}
+			break;
+		case IIO_CHAN_INFO_SAMP_FREQ:
+			switch (chan->type) {
+				case IIO_PROXIMITY:
+					if(val > 200){
+						to_write = APDS9999_PS_RATE_400_MS;
+					}else if(val > 100){
+						to_write = APDS9999_PS_RATE_200_MS;
+					}else if(val > 50){
+						to_write = APDS9999_PS_RATE_100_MS;
+					}else if(val > 25){
+						to_write = APDS9999_PS_RATE_250_MS;
+					}else if(val > 12){
+						to_write = APDS9999_PS_RATE_50_MS;
+					}else if(val > 6){
+						to_write = APDS9999_PS_RATE_12_5_MS;
+					}else{
+						to_write = APDS9999_PS_RATE_6_25_MS;
+					}
+					// TODO may add some debug info
+
+					// this performs a read, modify, write cycle
+					/* regmap, register to write, mask to use, what to write */
+					ret = regmap_update_bits(data->regmap, APDS9999_REG_PS_MEAS_RATE, APDS9999_PS_RATE, to_write);
+					if(ret){
+						dev_err(indio_dev, "failed updating proximity sensor measurment rate.\n");
+						return ret;
+					}
+
+					break;				
+				case IIO_INTENSITY:
+					if(val > 1000){
+						to_write = APDS9999_LS_RATE_2000_MS;
+					}else if(val > 500){
+						to_write = APDS9999_LS_RATE_1000_MS;
+					}else if(val > 200){
+						to_write = APDS9999_LS_RATE_500_MS;
+					}else if(val > 100){
+						to_write = APDS9999_LS_RATE_200_MS;
+					}else if(val > 50){
+						to_write = APDS9999_LS_RATE_100_MS;
+					}else if(val > 25){
+						to_write = APDS9999_LS_RATE_50_MS;
+					}else{
+						to_write = APDS9999_LS_RATE_25_MS;
+					}
+					// TODO may add some debug info
+
+					// this performs a read, modify, write cycle
+					/* regmap, register to write, mask to use, what to write */
+					ret = regmap_update_bits(data->regmap, APDS9999_REG_LS_MEAS_RATE, APDS9999_LS_RATE, to_write);
+					if(ret){
+						dev_err(indio_dev, "failed updating light sensor measurment rate.\n");
+						return ret;
+					}
+
+					break;				
+				default:
+					return -EINVAL;
+			}
+			break;
+		case IIO_CHAN_INFO_HARDWAREGAIN:
+			// Just the light channels have a gain that can be set in LS_GAIN
+			if(chan->type == IIO_INTENSITY) {
+					if(val > 9){
+						to_write = APDS9999_LS_GAIN_RANGE_18;
+					}else if(val > 6){
+						to_write = APDS9999_LS_GAIN_RANGE_9;
+					}else if(val > 3){
+						to_write = APDS9999_LS_GAIN_RANGE_6;
+					}else if(val > 1){
+						to_write = APDS9999_LS_GAIN_RANGE_3;
+					}else{
+						to_write = APDS9999_LS_GAIN_RANGE_1;
+					}
+					// TODO may add some debug info
+
+					// this performs a read, modify, write cycle
+					/* regmap, register to write, mask to use, what to write */
+					ret = regmap_update_bits(data->regmap, APDS9999_REG_LS_GAIN, APDS9999_LS_GAIN_RANGE, to_write);
+					if(ret){
+						dev_err(indio_dev, "failed updating light sensor gain.\n");
+						return ret;
+					}
+			}
+			break;
+		default:
+			ret = -EINVAL;
 	}
 
 	return ret;
@@ -520,8 +743,8 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 
 static const struct iio_info apds9999_info = {
 	.read_raw = apds9999_read_raw,
+	.write_raw = apds9999_write_raw,
 	// TODO attributes
-	// TODO writes
 };
 
 // This function gets called when the kernel loads detects the device and loads this driver. 
