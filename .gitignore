@@ -14,3 +14,4 @@ modules.builtin.modinfo
 .clangd
 compile_commands.json
 .tmp*
+.cache
