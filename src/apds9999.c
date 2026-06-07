@@ -46,6 +46,14 @@
 // Driver Name - done as define, since we use it multiple times
 #define APDS9999_DRIVER_NAME 	"apds9999"
 
+// We define this macro to shift the default value into the correct bitfield position
+// This is done to avoid some nested BUILD_BUG_ON_ZERO makro expansions, which would place a struct inside a sizeof()
+// since we just prep the default values from the datasheet, this is save if we check while testing
+#define PREP_DEF(_mask, _val) (((_val) << __bf_shf(_mask)) & (_mask))
+
+
+
+
 /* ------------------- REGISTER DEFINES ------------------- */
 
 // Register definitions for the device - check datasheet for more information
@@ -210,24 +218,24 @@
 // TODO thresholds etc
 
 /* DEFINE DEFAULT VALUES - taken from the datasheet */
-// FIELD_PREP is used to fill just a subset of bits
+// PREP_DEF is used to fill just a subset of bits.
 
 #define APDS9999_REG_MAIN_CTRL_DEF              0x00 											/* 0x00 */
-#define APDS9999_REG_PS_VCSEL_DEF				\												/* 0x36 */
-			FIELD_PREP(APDS9999_PS_VCSEL_FREQ, APDS9999_PS_VCSEL_FREQ_60kHz) | \
-			FIELD_PREP(APDS9999_PS_VCSEL_CURR, APDS9999_PS_VCSEL_CURR_DEF) 
+#define APDS9999_REG_PS_VCSEL_DEF																/* 0x36 */ \
+			PREP_DEF(APDS9999_PS_VCSEL_FREQ, APDS9999_PS_VCSEL_FREQ_60kHz) | \
+			PREP_DEF(APDS9999_PS_VCSEL_CURR, APDS9999_PS_VCSEL_CURR_DEF)
 #define APDS9999_REG_PS_PULSES_DEF				0x08 											/* 0x08 */
-#define APDS9999_REG_PS_MEAS_RATE_DEF 			\												/* 0x05 */
-		FIELD_PREP(APDS9999_PS_RESO, APDS9999_PS_RESO_8_BIT) | \
-		FIELD_PREP(APDS9999_PS_RATE, APDS9999_PS_RATE_100_MS)
-#define APDS9999_REG_LS_MEAS_RATE_DEF			\												/* 0x22 */ 
-		FIELD_PREP(APDS9999_LS_RESO, APDS9999_LS_RESO_18_BIT_100_MS) | 
-		FIELD_PREP(APDS9999_LS_RATE, APDS9999_LS_RATE_100_MS) 
-#define APDS9999_REG_LS_GAIN_DEF				\												/* 0x01 */
-			FIELD_PREP(APDS9999_LS_GAIN_RANGE, APDS9999_LS_GAIN_RANGE_3)
+#define APDS9999_REG_PS_MEAS_RATE_DEF 															/* 0x05 */ \
+		PREP_DEF(APDS9999_PS_RESO, APDS9999_PS_RESO_8_BIT) | \
+		PREP_DEF(APDS9999_PS_RATE, APDS9999_PS_RATE_100_MS)
+#define APDS9999_REG_LS_MEAS_RATE_DEF															/* 0x22 */ \
+		PREP_DEF(APDS9999_LS_RESO, APDS9999_LS_RESO_18_BIT_100_MS) | \
+		PREP_DEF(APDS9999_LS_RATE, APDS9999_LS_RATE_100_MS)
+#define APDS9999_REG_LS_GAIN_DEF																/* 0x01 */ \
+			PREP_DEF(APDS9999_LS_GAIN_RANGE, APDS9999_LS_GAIN_RANGE_3)
 #define APDS9999_REG_PART_ID_DEF				0xC2 											/* 0xc2 */
-#define APDS9999_REG_MAIN_STATUS_DEF			\												/* 0x20 */
-			FIELD_PREP(APDS9999_STATUS_POS, 1)
+#define APDS9999_REG_MAIN_STATUS_DEF															/* 0x20 */ \
+			PREP_DEF(APDS9999_STATUS_POS, 1)
 #define APDS9999_REG_PS_DATA_0_DEF				0x00 											/* 0x00 */
 #define APDS9999_REG_PS_DATA_1_DEF              0x00 											/* 0x00 */
 #define APDS9999_REG_LS_DATA_IR_0_DEF           0x00 											/* 0x00 */
@@ -242,8 +250,8 @@
 #define APDS9999_REG_LS_DATA_RED_0_DEF          0x00 											/* 0x00 */
 #define APDS9999_REG_LS_DATA_RED_1_DEF          0x00 											/* 0x00 */
 #define APDS9999_REG_LS_DATA_RED_2_DEF          0x00 											/* 0x00 */
-#define APDS9999_REG_INT_CFG_DEF				\												/* 0x10 */
-			FIELD_PREP(APDS9999_INT_CFG_LS_INT_SEL, APDS9999_INT_CFG_LS_INT_SEL_GREEN_ALS) 
+#define APDS9999_REG_INT_CFG_DEF																/* 0x10 */ \
+			PREP_DEF(APDS9999_INT_CFG_LS_INT_SEL, APDS9999_INT_CFG_LS_INT_SEL_GREEN_ALS)
 #define APDS9999_REG_INT_PST_DEF          		0x00 											/* 0x00 */
 #define APDS9999_REG_PS_THRES_UP_0_DEF			0xFF											/* 0xff */
 #define APDS9999_REG_PS_THRES_UP_1_DEF			0x07											/* 0x07 */
