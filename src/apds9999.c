@@ -23,13 +23,26 @@
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
  * - [ ] thresholds
  * - [ ] ps scale
- * - [ ]
+ * - [ ] use regfield for writing single bits
  * - [ ]
  * - [ ]
  *
  *
  */
 
+#include <linux/module.h>
+#include <linux/i2c.h>
+#include <linux/iio/iio.h>
+#include <linux/regmap.h>
+#include <linux/bitfield.h>     // FIELD_PREP & FIELD_GET
+#include <linux/bits.h>         // BIT & GENMASK
+#include <linux/device.h>       // dev_err, dev_info, dev_warn
+#include <linux/errno.h>        // error codes like -EINVAL, -ENODEV
+#include <linux/types.h>        // types like __le16
+//#include <linux/byteorder.h>    // byte order macros like le16_to_cpu
+#include <linux/property.h>     // may be needed later for device tree support // TODO
+
+/* ------------------- HELPER MAKROS ------------------- */
 // Driver Name - done as define, since we use it multiple times
 #define APDS9999_DRIVER_NAME 	"apds9999"
 
