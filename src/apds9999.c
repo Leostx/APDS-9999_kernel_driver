@@ -4,7 +4,7 @@
  * Created by lucx & Lstx
  *
  * The sensor has the I2C ID 0x52
- *	
+ *
  * Terminology:
  * 	PS: Proximity Sensor
  * 	LS: Light Sensor
@@ -106,7 +106,7 @@
 #define APDS9999_CTRL_LS_EN         BIT(1)  /* light sensor enable */
 #define APDS9999_CTRL_PS_EN         BIT(0)  /* proximity enable */
 
-// The following are the bits in PS_VCSEL - writing them restarts the PS state machine // TODO is this relevant? 
+// The following are the bits in PS_VCSEL - writing them restarts the PS state machine // TODO is this relevant?
 #define APDS9999_PS_VCSEL_FREQ      GENMASK(6, 4)
 #define APDS9999_PS_VCSEL_CURR      GENMASK(2, 0)
 
@@ -118,13 +118,13 @@
 #define APDS9999_PS_VCSEL_FREQ_100kHz 	0b111
 
 /* Possible VCSEL Current values  */
-#define APDS9999_PS_VCSEL_CURR_DEF		0b110 	/* default*/	
+#define APDS9999_PS_VCSEL_CURR_DEF		0b110 	/* default*/
 #define APDS9999_PS_VCSEL_CURR_10mA		0b010
 #define APDS9999_PS_VCSEL_CURR_25mA		0b011
 
 /*
  * From the datasheet for PS_MEAS_RATE and LS_MEAS_RATE:
- * 	When the measurement repeat rate is programmed to be faster than possible for the programmed ADC measurement time, 
+ * 	When the measurement repeat rate is programmed to be faster than possible for the programmed ADC measurement time,
  * 	the repeat rate will be lower than programmed (maximum speed).
  *
  * 	Writing to this register stops the ongoing measurements and starts new measurements (depending on the respective enable bits).
@@ -277,13 +277,13 @@
 #define APDS9999_CH_ENDIANNESS IIO_CPU
 
 // this defines the attributes for the scan-type used by the intensity related channels
-#define APDS9999_INTENSITY_SCAN_TYPE {			\	 /* LS resolution: 13 - 20 bit, default 18 bit ( set in LS_MEAS_RATE ) */
+#define APDS9999_INTENSITY_SCAN_TYPE {				 /* LS resolution: 13 - 20 bit, default 18 bit ( set in LS_MEAS_RATE ) */ \
 	.sign           = 'u',						\
 	.realbits       = 20,						\
 	.storagebits    = 32,						\
 	.shift          = 0,						\
 	.endianness     = APDS9999_CH_ENDIANNESS,	\
-}	
+}
 
 // This is the channel definition for the intensity channels - parameters are color and scan index
 #define APDS9999_INTENSITY_CHANNEL(_color, _si) { 			\
@@ -294,17 +294,17 @@
 	.scan_index     = _si,									\
 	.scan_type      = APDS9999_INTENSITY_SCAN_TYPE,			\
 	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),			\
-	.info_mask_shared_by_type =	 							\ 	/* the switch case for reading is shared by all channels of the same type - intensity in this case */
-		BIT(IIO_CHAN_INFO_RESOLUTION) |						\	/* the resolution can be set in LS_MEAS_RATE */
-		BIT(IIO_CHAN_INFO_SAMP_FREQ)  |						\	/* the measurement rate can be set in the LS_MEAS_RATE */ 
-		BIT(IIO_CHAN_INFO_HARDWAREGAIN) |					\	/* the gain can be set in LS_GAIN */
-		BIT(IIO_CHAN_INFO_PROCESSED),
+	.info_mask_shared_by_type =	 							/* the switch case for reading is shared by all channels of the same type - intensity in this case */ \
+		BIT(IIO_CHAN_INFO_RESOLUTION) |						/* the resolution can be set in LS_MEAS_RATE */ \
+		BIT(IIO_CHAN_INFO_SAMP_FREQ)  |						/* the measurement rate can be set in the LS_MEAS_RATE */ \
+		BIT(IIO_CHAN_INFO_HARDWAREGAIN) |					/* the gain can be set in LS_GAIN */ \
+		BIT(IIO_CHAN_INFO_PROCESSED),                       \
 }
 
 /* ------------------- END IIO CHANNEL DEFINES ------------------- */
 
 // This is the type of struct that will eventually hold the data that our driver needs to function
-struct apds9999_data {    
+struct apds9999_data {
 	struct i2c_client *client;
 	struct iio_dev *indio_dev;
 	struct regmap *regmap;
@@ -419,19 +419,19 @@ static const struct regmap_config apds9999_regmap_config = {
 	.name = "apds9999_regmap",	/* Name, not mandatory, only if we should have multiple regmaps */
 	.reg_bits = 8,				/* Number of bits to address a register - register addresses are 1-byte alligned */
 	.val_bits = 8,				/* Number of bits inside a register */
-	
+
 	.rd_table = &apds9999_readable_table,		/* This defines the range of registers that are readable (all) */
 	.wr_table = &apds9999_writeable_table,		/* This defines the two ranges of registers that are writable */
-	
+
     .volatile_table = &volatile_range_cfg,		/* These registers change on hardware events */
     .precious_table = &precious_range_cfg,		/* These registers change hardware on reads */
-	
+
 	.reg_defaults = apds9999_reg_defaults,		/* default values of the registers */
     .num_reg_defaults = ARRAY_SIZE(apds9999_reg_defaults),
 
 	.max_register = APDS9999_REG_LS_THRES_VAR,
 	.cache_type = REGCACHE_MAPLE,				/* this is the type of cache. Seems the best tradeoff */
-	
+
 	//TODO maybe wee want to add ranges for the consecutive reads
 };
 
@@ -439,16 +439,16 @@ static const struct regmap_config apds9999_regmap_config = {
 
 // Here we will define all the channels that then get assigned to the iio once created
 static const struct iio_chan_spec apds9999_channels[] = {
-	// all data registers are locked in hardware if i2c is reading from them. 
+	// all data registers are locked in hardware if i2c is reading from them.
 	// This is to guarantee to read the same measurement data. Eventual new data is inserted afterwards
-	
-	
+
+
 	/* Proximity Sensor (PS) - Maximum resolution 11, default resolution 8 bit ( set in PS_MEAS_RATE ) */
 	{
 		.type           = IIO_PROXIMITY,
 		.address        = APDS9999_REG_PS_DATA_0,
 		/* The following two are for buffer reading, so userspace consumes less cpu when reading the whole sensor continiously */
-		.scan_index     = 0,							/* This defines the order in which channels are placed inside the buffer */			
+		.scan_index     = 0,							/* This defines the order in which channels are placed inside the buffer */
 		.scan_type      = {
 			.sign           = 'u',
 			.realbits       = 11,						/* TODO should we modify this based on the value set in PS_MEAS_RATE? */
@@ -456,8 +456,8 @@ static const struct iio_chan_spec apds9999_channels[] = {
 			.shift          = 0,
 			.endianness     = APDS9999_CH_ENDIANNESS,	/* This refers to the buffer used by the driver */
 		},
-		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),	
-		.info_mask_shared_by_type = 					
+		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+		.info_mask_shared_by_type =
 			BIT(IIO_CHAN_INFO_RESOLUTION) |				/* the resolution can be set in PS_MEAS_RATE */
 			BIT(IIO_CHAN_INFO_SAMP_FREQ)  |				/* the sampling frequency can be set in the PS_MEAS_RATE */
 			BIT(IIO_CHAN_INFO_OFFSET),					/* This is for PS_CAN */
@@ -505,7 +505,7 @@ static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address
 		__le16 regs;
 		// regmap bulk read takes the number of bytes to read as the last argument
 		ret = regmap_bulk_read(data->regmap, address, &regs, 2);
-		// convert the final value to cpu endianness and save it in val 
+		// convert the final value to cpu endianness and save it in val
 		*val = le16_to_cpu(regs);
 	}
 
@@ -528,9 +528,9 @@ static int apds9999_read_ls_raw(struct apds9999_data *data, unsigned int address
 	__le32 buf;
 	// regmap bulk read takes the number of bytes to read as the last argument
 	ret = regmap_bulk_read(data->regmap, chan->address, &buf, 3);
-	// convert the final value to cpu endianness and save it in val 
+	// convert the final value to cpu endianness and save it in val
 	*val = le32_to_cpu(regs);
-	
+
 
 	// if ret is 0, everything went fine. Inform the caller that we read an int
 	if (!ret)
@@ -608,7 +608,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 					*val = &val * ls_lux_conversion_map[gain][reso];
 			}
 			break;
-			
+
 		// TODO other cases such as scale etc
 	}
 
@@ -644,7 +644,7 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 						return ret;
 					}
 
-					break;				
+					break;
 				case IIO_INTENSITY:
 					if (val < 13 || val > 20){
 						dev_err(indio_dev, "light sensor resolution should be between 13 and 20 bit.\n");
@@ -653,7 +653,7 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 
 					// from the datasheet we get, that we just have option 0-5. They are linera, with a jump. Option with id 5 is actually 13 bit
 					if(val == 13){
-						to_write = 5 
+						to_write = 5
 					}else{
 						to_write = 20 - val;
 					}
@@ -665,7 +665,7 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 						return ret;
 					}
 
-					break;				
+					break;
 				default:
 					return -EINVAL;
 			}
@@ -698,7 +698,7 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 						return ret;
 					}
 
-					break;				
+					break;
 				case IIO_INTENSITY:
 					if(val > 1000){
 						to_write = APDS9999_LS_RATE_2000_MS;
@@ -725,7 +725,7 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 						return ret;
 					}
 
-					break;				
+					break;
 				default:
 					return -EINVAL;
 			}
@@ -768,7 +768,7 @@ static const struct iio_info apds9999_info = {
 	// TODO attributes
 };
 
-// This function gets called when the kernel loads detects the device and loads this driver. 
+// This function gets called when the kernel loads detects the device and loads this driver.
 // We can save the i2c_client handle for further use
 static int apds9999_probe(struct i2c_client *client){
 	// data struct that holds the data for out device
@@ -785,7 +785,7 @@ static int apds9999_probe(struct i2c_client *client){
 		// we negate it, because the error code in <errno.h> is defined as positive number, to indicate an error we need to return a negative one
 		return -ENOMEM;
 
-	
+
 	// set attributes of the iio_dev
 	indio_dev->name = APDS9999_DRIVER_NAME;
 	indio_dev->info = &apds9999_info;			// hook to the functions to interact with the device
@@ -821,7 +821,7 @@ static int apds9999_probe(struct i2c_client *client){
 	ret = devm_iio_device_register(indio_dev);
 	if (ret)
 		return ret;
-	
+
 	dev_info("Hello world from apds9999");
 	return 0;
 }
@@ -830,16 +830,16 @@ static int apds9999_probe(struct i2c_client *client){
 // This function is called when the kernel unloads the driver
 // We can release the i2c_client handle
 static int apds9999_remove(struct i2c_client *client){
-	
+
 	// Not sure if we will need this. From a sensor perspective as well as from a kernel one.
-	
+
 	// TODO
 	dev_info("Goodbye world from apds9999");
-	return 0;	
+	return 0;
 }
 
 
-// This holds the names of the sensors this driver can handle 
+// This holds the names of the sensors this driver can handle
 // The second parameter is an optional driver data value that may distinguish different versions of the same sensor
 static const struct i2c_device_id apds9999_idtable[] = {
       { "apds9999", 0 },
