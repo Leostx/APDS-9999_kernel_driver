@@ -1,0 +1,16 @@
+*.ko
+*.o
+*.o.cmd
+*.o.d
+*.mod
+*.mod.c
+*.mod.o
+*.order
+Module.symvers
+modules.builtin
+modules.builtin.modinfo
+.*.cmd
+.tmp_versions/
+.clangd
+compile_commands.json
+.tmp*
