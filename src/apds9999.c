@@ -843,6 +843,14 @@ static const struct i2c_device_id apds9999_idtable[] = {
 
 MODULE_DEVICE_TABLE(i2c, apds9999_idtable);
 
+static const of_device_id apds9999_oftable[] = {
+// inserire il pointer .data
+//	{ .compatible = "apds9999", .data = (void*)data }, 
+	{ }
+};
+
+MODULE_DEVICE_TABLE(of, apds9999_oftable);
+
 static struct i2c_driver apds9999_driver = {
       .driver = {
               .name   = APDS9999_DRIVER_NAME,   // this is the drivers name and should match the modules name
