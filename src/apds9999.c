@@ -561,7 +561,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 			break;
 		case IIO_CHAN_INFO_PROCESSED:
 			switch (chan->type) {
-				case IIO_INTENSITY:
+				case IIO_INTENSITY: {
 					// variable to hold the resolution setting
 					unsigned int reso;
 					// variable to hold the gain setting
@@ -599,6 +599,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 					*val = *val * ls_lux_conversion_map_milli[gain][reso] / 1000;
 
 					break;
+				}
 				default:
 					return -EINVAL;
 			}
@@ -676,9 +677,9 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 					}else if(val > 50){
 						to_write = APDS9999_PS_RATE_100_MS;
 					}else if(val > 25){
-						to_write = APDS9999_PS_RATE_200_MS;
-					}else if(val > 12){
 						to_write = APDS9999_PS_RATE_50_MS;
+					}else if(val > 12){
+						to_write = APDS9999_PS_RATE_25_MS;
 					}else if(val > 6){
 						to_write = APDS9999_PS_RATE_12_5_MS;
 					}else{
@@ -843,9 +844,9 @@ static const struct i2c_device_id apds9999_idtable[] = {
 
 MODULE_DEVICE_TABLE(i2c, apds9999_idtable);
 
-static const of_device_id apds9999_oftable[] = {
+static const struct of_device_id apds9999_oftable[] = {
 // inserire il pointer .data
-//	{ .compatible = "apds9999", .data = (void*)data }, 
+//	{ .compatible = "apds9999", .data = (void*)data },
 	{ }
 };
 
