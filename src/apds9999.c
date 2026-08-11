@@ -42,6 +42,9 @@
 #include <linux/types.h>        // types like __le16
 //#include <linux/byteorder.h>    // byte order macros like le16_to_cpu
 #include <linux/property.h>     // may be needed later for device tree support // TODO
+#include <linux/iio/sysfs.h>    // IIO_DEVICE_ATTR for the custom sysfs attributes
+#include <linux/kstrtox.h>       // kstrtobool parses sysfs user input to boolean
+#include <linux/sysfs.h>         // sysfs_emit formats sysfs reads for custom attributes
 
 // Driver Name - done as define, since we use it multiple times
 #define APDS9999_DRIVER_NAME 	"apds9999"
@@ -877,10 +880,83 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 	return ret;
 }
 
+
+/* -------------------------- CUSTOM SYSFS ATTRIBUTES -------------------------- */
+// Here we have custom sysfs attributs to get the full control over our driver
+
+// this function is for reading a boolean value from a register on the device through sysfs
+static ssize_t apds9999_attr_bool_show(struct device *dev, struct device_attribute *attr, char *buf){
+	// retrieve the iio_dev, then the driver data associated with it
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+	// This holds the apds9999_rf enum index in its address field
+	struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
+
+	unsigned int val;
+	int ret;
+
+	// regmap_field_read knows the register, mask and shift
+	ret = regmap_field_read(data->regfield[iio_attr->address], &val);
+	if(ret){
+		dev_err(&indio_dev->dev, "regmap_field_read failed for field %llu.\n",
+			(unsigned long long)iio_attr->address);
+		return ret;
+	}
+
+	return sysfs_emit(buf, "%u\n", val);
+}
+
+// this function is for writing a boolean value to a register on the device through sysfs
+static ssize_t apds9999_attr_bool_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
+	// retrieve the iio_dev, then the driver data associated with it
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+	// This holds the apds9999_rf enum index in its address field
+	struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
+
+	// variable to hold the boolean value the user wrote
+	bool enable;
+	int ret;
+
+	// kstrtobool parses the input to a boolean
+	ret = kstrtobool(buf, &enable);
+	if(ret)
+		return ret;
+
+	// regmap_field_write handles the read-modify-write, mask and shift internally;
+	ret = regmap_field_write(data->regfield[iio_attr->address], enable ? 1 : 0);
+	if(ret){
+		dev_err(&indio_dev->dev, "regmap_field_write failed for field %llu.\n",
+			(unsigned long long)iio_attr->address);
+		return ret;
+	}
+
+	// returns the number of bytes consumed on success
+	return len;
+}
+
+
+// these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
+static IIO_DEVICE_ATTR(ps_enable, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_PS_EN);
+static IIO_DEVICE_ATTR(ls_enable, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_LS_EN);
+static IIO_DEVICE_ATTR(rgb_mode,  0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_RGB_MODE);
+
+// list of custom attributes exposed to sysfs
+static struct attribute *apds9999_attributes[] = {
+	&iio_dev_attr_ps_enable.dev_attr.attr,
+	&iio_dev_attr_ls_enable.dev_attr.attr,
+	&iio_dev_attr_rgb_mode.dev_attr.attr,
+	NULL,	/* the attribute array must be NULL terminated */
+};
+
+static const struct attribute_group apds9999_attribute_group = {
+	.attrs = apds9999_attributes,
+};
+
 static const struct iio_info apds9999_info = {
+    .attrs = &apds9999_attribute_group,	/* exposes custom attributes in sysfs */
 	.read_raw = apds9999_read_raw,
 	.write_raw = apds9999_write_raw,
-	// TODO attributes
 };
 
 // This function gets called when the kernel loads detects the device and loads this driver.
