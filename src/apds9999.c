@@ -25,10 +25,12 @@
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
  * - [ ] thresholds
  * - [ ] ps scale
- * - [ ] use regfield for writing single bits
  * - [ ] what are events?
  * - [ ] should we use scale for the channels?
- *
+ * - [ ] is it ok to use the custom attributes or do we need to use the IIO channel masks?
+ * - [ ]
+ * - [ ]
+ * - [ ]
  *
  */
 
