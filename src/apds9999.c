@@ -528,6 +528,14 @@ enum apds9999_rf {
 
 /* ------------------- LOOK UP TABLES ------------------- */
 
+// LUT for VCSEL frequency (kHz)
+static const unsigned int apds9999_vcsel_freq_lut[] = { 60, 70, 80, 90, 100 }; /* kHz */
+
+// LUT for VCSEL drive current (mA)
+// APDS9999_PS_VCSEL_CURR_DEF (0b110) is the reset default but its mA value is not documented
+static const unsigned int apds9999_vcsel_curr_lut[] = { 10, 25 }; /* mA */
+
+
 // This table is for converting the light sensor readings to lux values - this comes from the datasheet
 // Resolution (lux/count) indexed by [gain][resolution]
 // Gain indices: 0=1x, 1=3x, 2=6x, 3=9x, 4=18x
@@ -937,13 +945,6 @@ static ssize_t apds9999_attr_bool_store(struct device *dev, struct device_attrib
 
 /* -------------------------- PS_VCSEL ATTRIBUTES -------------------------- */
 // VCSEL modulation frequency (kHz) and drive current (mA) */
-
-/* Index 0 = base bit pattern (APDS9999_PS_VCSEL_FREQ_60kHz = 3), index N = base + N */
-static const unsigned int apds9999_vcsel_freq_lut[] = { 60, 70, 80, 90, 100 }; /* kHz */
-
-/* Index 0 = base bit pattern (APDS9999_PS_VCSEL_CURR_10mA = 2), index N = base + N */
-/* APDS9999_PS_VCSEL_CURR_DEF (0b110) is the reset default but its mA value is not documented */
-static const unsigned int apds9999_vcsel_curr_lut[] = { 10, 25 }; /* mA */
 
 /* --- VCSEL frequency --- */
 
