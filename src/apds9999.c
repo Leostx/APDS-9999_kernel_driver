@@ -549,6 +549,10 @@ static const unsigned int apds9999_ls_reso_lut[] = { 20, 19, 18, 17, 16, 13 }; /
 // LUT for LS measurement rate in milliseconds, indexed by register field value (0–6)
 static const unsigned int apds9999_ls_rate_lut[] = { 25, 50, 100, 200, 500, 1000, 2000, 2000 }; /* ms */
 
+// LUT for LS gain multiplier, indexed by register field value (0–4)
+// bits 0b101 through 0b111 are reserved and not present in the table
+static const unsigned int apds9999_ls_gain_lut[] = { 1, 3, 6, 9, 18 }; /* x */
+
 
 // This table is for converting the light sensor readings to lux values - this comes from the datasheet
 // Resolution (lux/count) indexed by [gain][resolution]
@@ -1384,6 +1388,73 @@ static ssize_t apds9999_ls_meas_rate_store(struct device *dev, struct device_att
 
 /* -------------------------- END LS_MEAS_RATE ATTRIBUTES -------------------------- */
 
+/* -------------------------- LS_GAIN ATTRIBUTE -------------------------- */
+// LS analog gain multiplier from the LS_GAIN register
+
+static ssize_t apds9999_ls_gain_show(struct device *dev, struct device_attribute *attr, char *buf) {
+    // retrieve the iio_dev, then the driver data associated with it
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int bits;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_LS_GAIN_RANGE], &bits);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_read LS_GAIN_RANGE failed.\n");
+		return ret;
+	}
+
+	// bits 0b101 through 0b111 are not used
+	if (bits <= APDS9999_LS_GAIN_RANGE_18)
+		return sysfs_emit(buf, "%ux\n", apds9999_ls_gain_lut[bits]);
+
+	// bit pattern not in table
+	return sysfs_emit(buf, "raw:%u\n", bits);
+}
+
+static ssize_t apds9999_ls_gain_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len) {
+    // retrieve the iio_dev, then the driver data associated with it
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int input;
+	unsigned int write_val;
+	int ret;
+
+	// read the input as an unsigned integer
+	ret = kstrtouint(buf, 0, &input);
+	if (ret)
+		return ret;
+
+	// accept only the exact gain multiplier values documented in the datasheet
+	if (input == 1)
+		write_val = APDS9999_LS_GAIN_RANGE_1;
+	else if (input == 3)
+		write_val = APDS9999_LS_GAIN_RANGE_3;
+	else if (input == 6)
+		write_val = APDS9999_LS_GAIN_RANGE_6;
+	else if (input == 9)
+		write_val = APDS9999_LS_GAIN_RANGE_9;
+	else if (input == 18)
+		write_val = APDS9999_LS_GAIN_RANGE_18;
+	else
+		return -EINVAL;
+
+	dev_info(&indio_dev->dev, "Light Sensor gain will be set to %ux (bits: %u).\n",
+			apds9999_ls_gain_lut[write_val], write_val);
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_LS_GAIN_RANGE], write_val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_write LS_GAIN_RANGE failed.\n");
+		return ret;
+	}
+
+	return len;
+}
+
+/* -------------------------- END LS_GAIN ATTRIBUTE -------------------------- */
+
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -1408,6 +1479,9 @@ static IIO_DEVICE_ATTR(ps_meas_rate_us, 0644, apds9999_ps_meas_rate_show, apds99
 static IIO_DEVICE_ATTR(ls_reso_bit, 0644, apds9999_ls_reso_show, apds9999_ls_reso_store, 0);
 static IIO_DEVICE_ATTR(ls_meas_rate_ms, 0644, apds9999_ls_meas_rate_show, apds9999_ls_meas_rate_store, 0);
 
+// LS_GAIN register: LS analog gain multiplier
+static IIO_DEVICE_ATTR(ls_gain, 0644, apds9999_ls_gain_show, apds9999_ls_gain_store, 0);
+
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
     // MAIN_CTRL register
@@ -1427,6 +1501,8 @@ static struct attribute *apds9999_attributes[] = {
 	// LS_MEAS_RATE register
 	&iio_dev_attr_ls_reso_bit.dev_attr.attr,
 	&iio_dev_attr_ls_meas_rate_ms.dev_attr.attr,
+	// LS_GAIN register
+	&iio_dev_attr_ls_gain.dev_attr.attr,
 
 	NULL,	/* the attribute array must be NULL terminated */
 };
