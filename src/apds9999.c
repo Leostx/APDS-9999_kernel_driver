@@ -26,8 +26,8 @@
  * - [ ] thresholds
  * - [ ] ps scale
  * - [ ] use regfield for writing single bits
- * - [ ]
- * - [ ]
+ * - [ ] what are events?
+ * - [ ] should we use scale for the channels?
  *
  *
  */
@@ -338,11 +338,6 @@
 	.scan_index     = _si,									\
 	.scan_type      = APDS9999_INTENSITY_SCAN_TYPE,			\
 	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),			\
-	.info_mask_shared_by_type =	 							/* the switch case for reading is shared by all channels of the same type - intensity in this case */ \
-		BIT(IIO_CHAN_INFO_SAMP_FREQ)  |						/* the measurement rate can be set in the LS_MEAS_RATE */ \
-		BIT(IIO_CHAN_INFO_HARDWAREGAIN) |					/* the gain can be set in LS_GAIN */ \
-		BIT(IIO_CHAN_INFO_PROCESSED),                       \
-		/* TODO resolution has to be set */ \
 }
 
 /* ------------------- END IIO CHANNEL DEFINES ------------------- */
@@ -529,14 +524,7 @@ enum apds9999_rf {
 
 /* ------------------- END REGMAP CONFIG ------------------- */
 
-// This is the type of struct that will eventually hold the data that our driver needs to function
-struct apds9999_data {
-	struct i2c_client *client;
-	struct iio_dev *indio_dev;
-
-	struct regmap *regmap;
-	struct regmap_field *regfield[APDS9999_RF_COUNT];
-};
+/* ------------------- LOOK UP TABLES ------------------- */
 
 // This table is for converting the light sensor readings to lux values - this comes from the datasheet
 // Resolution (lux/count) indexed by [gain][resolution]
@@ -548,6 +536,18 @@ static const int ls_lux_conversion_map_milli[5][5] = {
     { 22,  45,  90,  179,  360 }, 			/* 6x   */
     { 15,  30,  59,  119,  239 }, 			/* 9x   */
     { 7,   15,  29,   59,  117 }, 			/* 18x  */
+};
+
+/* ------------------- END LOOK UP TABLES ------------------- */
+
+
+// This is the type of struct that will eventually hold the data that our driver needs to function
+struct apds9999_data {
+	struct i2c_client *client;
+	struct iio_dev *indio_dev;
+
+	struct regmap *regmap;
+	struct regmap_field *regfield[APDS9999_RF_COUNT];
 };
 
 
@@ -571,11 +571,6 @@ static const struct iio_chan_spec apds9999_channels[] = {
 			.endianness     = APDS9999_CH_ENDIANNESS,	/* This refers to the buffer used by the driver */
 		},
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
-		.info_mask_shared_by_type =
-			BIT(IIO_CHAN_INFO_SAMP_FREQ)  |				/* the sampling frequency can be set in the PS_MEAS_RATE */
-			BIT(IIO_CHAN_INFO_OFFSET),					/* This is for PS_CAN */
-			/* TODO PS_PULSES and PS_VCSEL options are missing */
-			/* TODO resolution has to be set */
 	},
 
 	APDS9999_INTENSITY_CHANNEL(RED, 1),
@@ -938,6 +933,138 @@ static ssize_t apds9999_attr_bool_store(struct device *dev, struct device_attrib
 }
 
 
+/* -------------------------- PS_VCSEL ATTRIBUTES -------------------------- */
+// VCSEL modulation frequency (kHz) and drive current (mA) */
+
+/* Index 0 = base bit pattern (APDS9999_PS_VCSEL_FREQ_60kHz = 3), index N = base + N */
+static const unsigned int apds9999_vcsel_freq_lut[] = { 60, 70, 80, 90, 100 }; /* kHz */
+
+/* Index 0 = base bit pattern (APDS9999_PS_VCSEL_CURR_10mA = 2), index N = base + N */
+/* APDS9999_PS_VCSEL_CURR_DEF (0b110) is the reset default but its mA value is not documented */
+static const unsigned int apds9999_vcsel_curr_lut[] = { 10, 25 }; /* mA */
+
+/* --- VCSEL frequency --- */
+
+static ssize_t apds9999_vcsel_freq_show(struct device *dev, struct device_attribute *attr, char *buf){
+    // retrieve the iio_dev, then the driver data associated with it
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int bits;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_VCSEL_FREQ], &bits);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_read PS_VCSEL_FREQ failed.\n");
+		return ret;
+	}
+
+	// check that the bits read is within the valid range of the LUT
+	if (bits >= APDS9999_PS_VCSEL_FREQ_60kHz && bits <= APDS9999_PS_VCSEL_FREQ_100kHz)
+		return sysfs_emit(buf, "%ukHz\n", apds9999_vcsel_freq_lut[bits - APDS9999_PS_VCSEL_FREQ_60kHz]);
+
+	// bit pattern not in table
+	return sysfs_emit(buf, "raw:%u\n", bits);
+}
+
+static ssize_t apds9999_vcsel_freq_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
+    // retrieve the iio_dev, then the driver data associated with it
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int input;
+	unsigned int write_val;
+	int ret;
+
+	// read the input as an unsigned integer
+	ret = kstrtouint(buf, 0, &input);
+	if (ret)
+		return ret;
+
+	// Take the plain bit pattern as input if available, otherwise round down to the nearest valid VCSEL frequency
+	if(input >= APDS9999_PS_VCSEL_FREQ_60kHz && input <= APDS9999_PS_VCSEL_FREQ_100kHz)
+		write_val = input;
+	else if (input <= 60)
+		write_val = APDS9999_PS_VCSEL_FREQ_60kHz;
+	else if (input <= 70)
+		write_val = APDS9999_PS_VCSEL_FREQ_70kHz;
+	else if (input <= 80)
+		write_val = APDS9999_PS_VCSEL_FREQ_80kHz;
+	else if (input <= 90)
+		write_val = APDS9999_PS_VCSEL_FREQ_90kHz;
+	else
+		write_val = APDS9999_PS_VCSEL_FREQ_100kHz;
+
+	dev_info(&indio_dev->dev, "Proximity Sensor VCSEL pulse modulation frequency will be set to %ukHz (bits: %u).\n",
+			apds9999_vcsel_freq_lut[write_val - APDS9999_PS_VCSEL_FREQ_60kHz], write_val);
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_PS_VCSEL_FREQ], write_val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_write PS_VCSEL_FREQ failed.\n");
+		return ret;
+	}
+
+	return len;
+}
+
+/* --- VCSEL current --- */
+
+static ssize_t apds9999_vcsel_curr_show(struct device *dev, struct device_attribute *attr, char *buf) {
+    // retrieve the iio_dev, then the driver data associated with it
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int bits;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_VCSEL_CURR], &bits);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_read PS_VCSEL_CURR failed.\n");
+		return ret;
+	}
+
+	if (bits >= APDS9999_PS_VCSEL_CURR_10mA && bits <= APDS9999_PS_VCSEL_CURR_25mA)
+		return sysfs_emit(buf, "%umA\n", apds9999_vcsel_curr_lut[bits - APDS9999_PS_VCSEL_CURR_10mA]);
+
+	return sysfs_emit(buf, "raw:%u\n", bits);
+}
+
+static ssize_t apds9999_vcsel_curr_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
+    // retrieve the iio_dev, then the driver data associated with it
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int input;
+	unsigned int write_val;
+	int ret;
+
+	// read the input as an unsigned integer
+	ret = kstrtouint(buf, 0, &input);
+	if (ret)
+		return ret;
+
+	// Take the plain bit pattern as input if available, otherwise round down to the nearest valid VCSEL current
+	if (input >= APDS9999_PS_VCSEL_CURR_10mA && input <= APDS9999_PS_VCSEL_CURR_25mA)
+		write_val = input;
+	else if (input <= 10)
+		write_val = APDS9999_PS_VCSEL_CURR_10mA;
+	else
+		write_val = APDS9999_PS_VCSEL_CURR_25mA;
+
+	dev_info(&indio_dev->dev, "Proximity Sensor VCSEL current will be set to %umA (bits: %u).\n",
+			apds9999_vcsel_curr_lut[write_val - APDS9999_PS_VCSEL_CURR_10mA], write_val);
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_PS_VCSEL_CURR], write_val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_write PS_VCSEL_CURR failed.\n");
+		return ret;
+	}
+
+	return len;
+}
+
+/* -------------------------- END PS_VCSEL ATTRIBUTES -------------------------- */
+
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -947,13 +1074,22 @@ static IIO_DEVICE_ATTR(rgb_mode, 0644, apds9999_attr_bool_show, apds9999_attr_bo
 static IIO_DEVICE_ATTR(sai_ps, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_SAI_PS);
 static IIO_DEVICE_ATTR(sai_ls, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_SAI_LS);
 
+// these are the controll bits from the PS_VCSEL register
+static IIO_DEVICE_ATTR(ps_vcsel_freq_khz, 0644, apds9999_vcsel_freq_show, apds9999_vcsel_freq_store, 0);
+static IIO_DEVICE_ATTR(ps_vcsel_curr_ma, 0644, apds9999_vcsel_curr_show, apds9999_vcsel_curr_store, 0);
+
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
+    // MAIN_CTRL register
 	&iio_dev_attr_ps_enable.dev_attr.attr,
 	&iio_dev_attr_ls_enable.dev_attr.attr,
 	&iio_dev_attr_rgb_mode.dev_attr.attr,
 	&iio_dev_attr_sai_ps.dev_attr.attr,
 	&iio_dev_attr_sai_ls.dev_attr.attr,
+	// PS_VCSEL register
+	&iio_dev_attr_ps_vcsel_freq_khz.dev_attr.attr,
+	&iio_dev_attr_ps_vcsel_curr_ma.dev_attr.attr,
+
 	NULL,	/* the attribute array must be NULL terminated */
 };
 
@@ -998,7 +1134,7 @@ static int apds9999_chip_init(struct apds9999_data *data){
 	// This disables everything else since we write the full register, but it doesnt matter since we are performing the reset anyway
 	// the error code we exclude is because the chip does not respond with an ack, since it has been reset
 	ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET);
-	if (ret != -EREMOTEIO) {
+	if (ret != -EREMOTEIO) { /* EREMOTEIO: "Remote I/O error" */
 		dev_err(&data->indio_dev->dev, "software reset failed.\n");
 		return ret;
 	}
