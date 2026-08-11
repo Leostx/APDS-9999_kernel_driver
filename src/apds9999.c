@@ -36,6 +36,7 @@
 #include <linux/regmap.h>
 #include <linux/bitfield.h>     // FIELD_PREP & FIELD_GET
 #include <linux/bits.h>         // BIT & GENMASK
+#include <linux/regmap.h>
 #include <linux/device.h>       // dev_err, dev_info, dev_warn
 #include <linux/errno.h>        // error codes like -EINVAL, -ENODEV
 #include <linux/types.h>        // types like __le16
@@ -97,9 +98,21 @@
 #define APDS9999_CTRL_LS_EN         BIT(1)  /* light sensor enable */
 #define APDS9999_CTRL_PS_EN         BIT(0)  /* proximity enable */
 
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_CTRL_SAI_PS      REG_FIELD(APDS9999_REG_MAIN_CTRL, 6, 6)
+#define APDS9999_FIELD_CTRL_SAI_LS      REG_FIELD(APDS9999_REG_MAIN_CTRL, 5, 5)
+#define APDS9999_FIELD_CTRL_SW_RESET    REG_FIELD(APDS9999_REG_MAIN_CTRL, 4, 4)
+#define APDS9999_FIELD_CTRL_RGB_MODE    REG_FIELD(APDS9999_REG_MAIN_CTRL, 2, 2)
+#define APDS9999_FIELD_CTRL_LS_EN       REG_FIELD(APDS9999_REG_MAIN_CTRL, 1, 1)
+#define APDS9999_FIELD_CTRL_PS_EN       REG_FIELD(APDS9999_REG_MAIN_CTRL, 0, 0)
+
 // The following are the bits in PS_VCSEL - writing them restarts the PS state machine // TODO is this relevant?
 #define APDS9999_PS_VCSEL_FREQ      GENMASK(6, 4)
 #define APDS9999_PS_VCSEL_CURR      GENMASK(2, 0)
+
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_PS_VCSEL_FREQ    REG_FIELD(APDS9999_REG_PS_VCSEL, 4, 6)
+#define APDS9999_FIELD_PS_VCSEL_CURR    REG_FIELD(APDS9999_REG_PS_VCSEL, 0, 2)
 
 /* Possible VCSEL Frequency values  */
 #define APDS9999_PS_VCSEL_FREQ_60kHz 	0b011	/* default */
@@ -126,6 +139,10 @@
 #define APDS9999_PS_RESO      		GENMASK(4, 3)	/* Proximity Sensor resolution (bits) */
 #define APDS9999_PS_RATE      		GENMASK(2, 0)	/* Proximity Sensor measurement rate (ms) - controls the timing of the periodic measurements of the PS in active mode*/
 
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_PS_RESO          REG_FIELD(APDS9999_REG_PS_MEAS_RATE, 3, 4)
+#define APDS9999_FIELD_PS_RATE          REG_FIELD(APDS9999_REG_PS_MEAS_RATE, 0, 2)
+
 /* Possible PS Resolution values  */
 #define APDS9999_PS_RESO_8_BIT		0b00	/* default*/
 #define APDS9999_PS_RESO_9_BIT		0b01
@@ -144,6 +161,10 @@
 // The following are the bits in LS_MEAS_RATE
 #define APDS9999_LS_RESO      		GENMASK(6, 4)	/* Light Sensor resolution (ms) */
 #define APDS9999_LS_RATE      		GENMASK(2, 0) 	/* Light Sensor measurement rate (ms)*/
+
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_LS_RESO          REG_FIELD(APDS9999_REG_LS_MEAS_RATE, 4, 6)
+#define APDS9999_FIELD_LS_RATE          REG_FIELD(APDS9999_REG_LS_MEAS_RATE, 0, 2)
 
 /* Possible LS Resolution values  */
 #define APDS9999_LS_RESO_20_BIT_400_MS    0b000
@@ -165,6 +186,9 @@
 // The following are the bits in the LS_GAIN
 #define APDS9999_LS_GAIN_RANGE      GENMASK(2, 0) 	/* Writing to this register resets the LS state machine and starts new measurements */
 
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_LS_GAIN_RANGE    REG_FIELD(APDS9999_REG_LS_GAIN, 0, 2)
+
 /* Possible LS Gain values */
 #define APDS9999_LS_GAIN_RANGE_1      0b000
 #define APDS9999_LS_GAIN_RANGE_3      0b001	/* default */
@@ -176,6 +200,10 @@
 #define APDS9999_ID_PART	   		GENMASK(7, 4)	/* Part number id */
 #define APDS9999_ID_REVI	   		GENMASK(3, 0)	/* revision id */
 
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_ID_PART          REG_FIELD(APDS9999_REG_PART_ID, 4, 7)
+#define APDS9999_FIELD_ID_REVI          REG_FIELD(APDS9999_REG_PART_ID, 0, 3)
+
 // The following are the bits in the MAIN_STATUS
 #define APDS9999_STATUS_POS         BIT(5)	/* Power On Status*/
 #define APDS9999_STATUS_LS_INT      BIT(4)	/* interrupt occured for ls*/
@@ -183,9 +211,19 @@
 #define APDS9999_STATUS_PS_INT      BIT(1)	/* interrupt occured for ps*/
 #define APDS9999_STATUS_PS_DATA 	BIT(0)	/* new ps data is ready*/
 
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_STATUS_POS       REG_FIELD(APDS9999_REG_MAIN_STATUS, 5, 5)
+#define APDS9999_FIELD_STATUS_LS_INT    REG_FIELD(APDS9999_REG_MAIN_STATUS, 4, 4)
+#define APDS9999_FIELD_STATUS_LS_DATA   REG_FIELD(APDS9999_REG_MAIN_STATUS, 3, 3)
+#define APDS9999_FIELD_STATUS_PS_INT    REG_FIELD(APDS9999_REG_MAIN_STATUS, 1, 1)
+#define APDS9999_FIELD_STATUS_PS_DATA   REG_FIELD(APDS9999_REG_MAIN_STATUS, 0, 0)
+
 
 // The following are the special bits for PS_DATA - regards PS_DATA_1
 #define APDS9999_REG_PS_DATA_1_OVRFLW	BIT(3)	/* does the measurement lie outside of the measurable range */
+
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_PS_DATA_1_OVRFLW REG_FIELD(APDS9999_REG_PS_DATA_1, 3, 3)
 
 // The following are the bits for the INT_CFG
 #define APDS9999_INT_CFG_LS_INT_SEL			 GENMASK(5, 4)
@@ -193,6 +231,13 @@
 #define APDS9999_INT_CFG_LS_INT_EN           BIT(2)  /* LS interrupt enabled */
 #define APDS9999_INT_CFG_PS_LOGIC_MODE       BIT(1)  /* 0=INT signal is active until status is cleared, 1=INT updated after every measurement */
 #define APDS9999_INT_CFG_PS_INT_EN           BIT(0)  /* PS interrupt enabled */
+
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_INT_CFG_LS_INT_SEL       REG_FIELD(APDS9999_REG_INT_CFG, 4, 5)
+#define APDS9999_FIELD_INT_CFG_LS_VAR_MODE      REG_FIELD(APDS9999_REG_INT_CFG, 3, 3)
+#define APDS9999_FIELD_INT_CFG_LS_INT_EN        REG_FIELD(APDS9999_REG_INT_CFG, 2, 2)
+#define APDS9999_FIELD_INT_CFG_PS_LOGIC_MODE    REG_FIELD(APDS9999_REG_INT_CFG, 1, 1)
+#define APDS9999_FIELD_INT_CFG_PS_INT_EN        REG_FIELD(APDS9999_REG_INT_CFG, 0, 0)
 
 /* Possible INT_CFG LS_INT_SEL values */
 #define APDS9999_INT_CFG_LS_INT_SEL_IR			0b00
@@ -205,6 +250,10 @@
 /* sets the number of similar consecutive ints, before the int is asserted */
 #define APDS9999_INT_PST_LS_PERS			 GENMASK(7, 4)
 #define APDS9999_INT_PST_PS_PERS			 GENMASK(3, 0)
+
+// defining the same as REGFIELDS
+#define APDS9999_FIELD_INT_PST_LS_PERS  REG_FIELD(APDS9999_REG_INT_PST, 4, 7)
+#define APDS9999_FIELD_INT_PST_PS_PERS  REG_FIELD(APDS9999_REG_INT_PST, 0, 3)
 
 // TODO thresholds etc
 
@@ -261,7 +310,6 @@
 
 /* ------------------- END REGISTER DEFINES ------------------- */
 
-
 /* ------------------- IIO CHANNEL DEFINES ------------------- */
 
 // This sets the endianess by which the iio stores the values in the buffer when scanning the channels
@@ -293,25 +341,6 @@
 }
 
 /* ------------------- END IIO CHANNEL DEFINES ------------------- */
-
-// This is the type of struct that will eventually hold the data that our driver needs to function
-struct apds9999_data {
-	struct i2c_client *client;
-	struct iio_dev *indio_dev;
-	struct regmap *regmap;
-};
-
-// This table is for converting the light sensor readings to lux values - this comes from the datasheet
-// Resolution (lux/count) indexed by [gain][resolution]
-// Gain indices: 0=1x, 1=3x, 2=6x, 3=9x, 4=18x
-// Resolution indices: 0=20bit, 1=19bit, 2=18bit, 3=17bit, 4=16bit
-static const int ls_lux_conversion_map_milli[5][5] = {
-    { 136, 273, 548, 1099, 2193 }, 			/* 1x   */
-    { 45,  90,  180, 359,  722 }, 			/* 3x   */
-    { 22,  45,  90,  179,  360 }, 			/* 6x   */
-    { 15,  30,  59,  119,  239 }, 			/* 9x   */
-    { 7,   15,  29,   59,  117 }, 			/* 18x  */
-};
 
 /* ------------------- REGMAP CONFIG ------------------- */
 
@@ -426,7 +455,96 @@ static const struct regmap_config apds9999_regmap_config = {
 	//TODO maybe wee want to add ranges for the consecutive reads
 };
 
+
+// Here we define the regmap fields
+static const struct reg_field apds9999_reg_fields[] = {
+	APDS9999_FIELD_CTRL_SAI_PS,
+	APDS9999_FIELD_CTRL_SAI_LS,
+	APDS9999_FIELD_CTRL_SW_RESET,
+	APDS9999_FIELD_CTRL_RGB_MODE,
+	APDS9999_FIELD_CTRL_LS_EN,
+	APDS9999_FIELD_CTRL_PS_EN,
+	APDS9999_FIELD_PS_VCSEL_FREQ,
+	APDS9999_FIELD_PS_VCSEL_CURR,
+	APDS9999_FIELD_PS_RESO,
+	APDS9999_FIELD_PS_RATE,
+	APDS9999_FIELD_LS_RESO,
+	APDS9999_FIELD_LS_RATE,
+	APDS9999_FIELD_LS_GAIN_RANGE,
+	APDS9999_FIELD_ID_PART,
+	APDS9999_FIELD_ID_REVI,
+	APDS9999_FIELD_STATUS_POS,
+	APDS9999_FIELD_STATUS_LS_INT,
+	APDS9999_FIELD_STATUS_LS_DATA,
+	APDS9999_FIELD_STATUS_PS_INT,
+	APDS9999_FIELD_STATUS_PS_DATA,
+	APDS9999_FIELD_PS_DATA_1_OVRFLW,
+	APDS9999_FIELD_INT_CFG_LS_INT_SEL,
+	APDS9999_FIELD_INT_CFG_LS_VAR_MODE,
+	APDS9999_FIELD_INT_CFG_LS_INT_EN,
+	APDS9999_FIELD_INT_CFG_PS_LOGIC_MODE,
+	APDS9999_FIELD_INT_CFG_PS_INT_EN,
+	APDS9999_FIELD_INT_PST_LS_PERS,
+	APDS9999_FIELD_INT_PST_PS_PERS,
+};
+
+// this are the indices into apds9999_data.regfield[]
+// we should use these to access the regmap fields
+enum apds9999_rf {
+	APDS9999_RF_CTRL_SAI_PS = 0,
+	APDS9999_RF_CTRL_SAI_LS,
+	APDS9999_RF_CTRL_SW_RESET,
+	APDS9999_RF_CTRL_RGB_MODE,
+	APDS9999_RF_CTRL_LS_EN,
+	APDS9999_RF_CTRL_PS_EN,
+	APDS9999_RF_PS_VCSEL_FREQ,
+	APDS9999_RF_PS_VCSEL_CURR,
+	APDS9999_RF_PS_RESO,
+	APDS9999_RF_PS_RATE,
+	APDS9999_RF_LS_RESO,
+	APDS9999_RF_LS_RATE,
+	APDS9999_RF_LS_GAIN_RANGE,
+	APDS9999_RF_ID_PART,
+	APDS9999_RF_ID_REVI,
+	APDS9999_RF_STATUS_POS,
+	APDS9999_RF_STATUS_LS_INT,
+	APDS9999_RF_STATUS_LS_DATA,
+	APDS9999_RF_STATUS_PS_INT,
+	APDS9999_RF_STATUS_PS_DATA,
+	APDS9999_RF_PS_DATA_1_OVRFLW,
+	APDS9999_RF_INT_CFG_LS_INT_SEL,
+	APDS9999_RF_INT_CFG_LS_VAR_MODE,
+	APDS9999_RF_INT_CFG_LS_INT_EN,
+	APDS9999_RF_INT_CFG_PS_LOGIC_MODE,
+	APDS9999_RF_INT_CFG_PS_INT_EN,
+	APDS9999_RF_INT_PST_LS_PERS,
+	APDS9999_RF_INT_PST_PS_PERS,
+	APDS9999_RF_COUNT,
+};
+
 /* ------------------- END REGMAP CONFIG ------------------- */
+
+// This is the type of struct that will eventually hold the data that our driver needs to function
+struct apds9999_data {
+	struct i2c_client *client;
+	struct iio_dev *indio_dev;
+
+	struct regmap *regmap;
+	struct regmap_field *regfield[APDS9999_RF_COUNT];
+};
+
+// This table is for converting the light sensor readings to lux values - this comes from the datasheet
+// Resolution (lux/count) indexed by [gain][resolution]
+// Gain indices: 0=1x, 1=3x, 2=6x, 3=9x, 4=18x
+// Resolution indices: 0=20bit, 1=19bit, 2=18bit, 3=17bit, 4=16bit
+static const int ls_lux_conversion_map_milli[5][5] = {
+    { 136, 273, 548, 1099, 2193 }, 			/* 1x   */
+    { 45,  90,  180, 359,  722 }, 			/* 3x   */
+    { 22,  45,  90,  179,  360 }, 			/* 6x   */
+    { 15,  30,  59,  119,  239 }, 			/* 9x   */
+    { 7,   15,  29,   59,  117 }, 			/* 18x  */
+};
+
 
 // Here we will define all the channels that then get assigned to the iio once created
 static const struct iio_chan_spec apds9999_channels[] = {
@@ -811,6 +929,16 @@ static int apds9999_probe(struct i2c_client *client){
 
 	data->client = client;
 	data->indio_dev = indio_dev;
+	
+	// TODO explain this better
+	ret = devm_regmap_field_bulk_alloc(&client->dev, data->regmap,
+					   data->regfield,
+					   apds9999_reg_fields,
+					   ARRAY_SIZE(apds9999_reg_fields));
+	if (ret) {
+		dev_err(&client->dev, "regmap field bulk allocation failed.\n");
+		return ret;
+	}
 
 	// TODO
 
