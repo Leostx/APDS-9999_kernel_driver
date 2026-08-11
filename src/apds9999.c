@@ -15,7 +15,9 @@
 /*
  * --- TODO ---
  *
- * - [ ] power management ?
+ * - [ ] power management basics: PS_EN / LS_EN / RGB_MODE now toggleable
+ *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
+ *       and regulator handling still missing
  * - [ ] of_device_id table for device tree compatibility?
  * - [ ] overflow bits of the measurement registers
  * - [ ] implement triggers
@@ -959,6 +961,55 @@ static const struct iio_info apds9999_info = {
 	.write_raw = apds9999_write_raw,
 };
 
+// this function gets called during probe to initialize the chip
+// It checks the part id register to verify the chip is an APDS-9999
+// and then resets it to a known state
+// Finally, it enables both PS and LS in RGB_MODE by default
+static int apds9999_chip_init(struct apds9999_data *data){
+	// variable to hold the part id we read back from the sensor
+	unsigned int part_id;
+	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
+	int ret = -EINVAL;
+
+	// regmap_read takes the regmap, the register and a pointer to store the value there
+	ret = regmap_read(data->regmap, APDS9999_REG_PART_ID, &part_id);
+	if(ret){
+		dev_err(&data->indio_dev->dev, "regmap reading PART_ID failed.\n");
+		return ret;
+	}
+
+	// we check if we are actually talking to the right device
+	if(part_id != APDS9999_REG_PART_ID_DEF){
+		dev_err(&data->indio_dev->dev,
+			"unexpected PART_ID 0x%02x (expected 0x%02x) - aborting probe.\n",
+			part_id, APDS9999_REG_PART_ID_DEF);
+		return -ENODEV; /* ENODEV: "No such device" */
+	}
+
+
+	// We write the SW_RESET bit to the MAIN_CTRL register to trigger the reset
+	// So we reset the chip also during a warm reboot without a power cycle
+	// This disables everything else since we write the full register, but it doesnt matter since we are performing the reset anyway
+	ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET);
+	if(ret){
+		dev_err(&data->indio_dev->dev, "software reset failed.\n");
+		return ret;
+	}
+
+	// Sleep between 1-1.5ms to allow the reset to complete. The datasheet talks abaout 500us, so we are conservative
+	usleep_range(1000, 1500);
+
+	// by default we enable both PS and LS, and select RGB_MODE
+	ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL,
+			APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN | APDS9999_CTRL_RGB_MODE);
+	if(ret){
+		dev_err(&data->indio_dev->dev, "failed enabling PS/LS.\n");
+		return ret;
+	}
+
+	return 0;
+}
+
 // This function gets called when the kernel loads detects the device and loads this driver.
 // We can save the i2c_client handle for further use
 static int apds9999_probe(struct i2c_client *client){
@@ -1016,7 +1067,13 @@ static int apds9999_probe(struct i2c_client *client){
 		return ret;
 	}
 
-	// TODO
+
+	// bring the chip into a known state and enable PS + LS by default
+	ret = apds9999_chip_init(data);
+	if (ret)
+		return ret;
+
+	//TODO
 
 	// register the driver for this iio device, return if it fails
 	ret = devm_iio_device_register(&client->dev, indio_dev);
@@ -1031,10 +1088,13 @@ static int apds9999_probe(struct i2c_client *client){
 // This function is called when the kernel unloads the driver
 // We can release the i2c_client handle
 static void apds9999_remove(struct i2c_client *client){
+	// retrieve the iio_dev that we stored during probe, then our driver data from it
+	struct iio_dev *indio_dev = i2c_get_clientdata(client);
+	struct apds9999_data *data = iio_priv(indio_dev);
 
-	// Not sure if we will need this. From a sensor perspective as well as from a kernel one.
+	// power down both PS and LS on module removal
+	regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, 0x00);
 
-	// TODO
 	dev_info(&client->dev,"Goodbye world from apds9999");
 }
 
