@@ -119,6 +119,8 @@
 #define APDS9999_FIELD_PS_VCSEL_FREQ    REG_FIELD(APDS9999_REG_PS_VCSEL, 4, 6)
 #define APDS9999_FIELD_PS_VCSEL_CURR    REG_FIELD(APDS9999_REG_PS_VCSEL, 0, 2)
 
+
+
 /* Possible VCSEL Frequency values  */
 #define APDS9999_PS_VCSEL_FREQ_60kHz 	0b011	/* default */
 #define APDS9999_PS_VCSEL_FREQ_70kHz 	0b100
@@ -1065,6 +1067,53 @@ static ssize_t apds9999_vcsel_curr_store(struct device *dev, struct device_attri
 
 /* -------------------------- END PS_VCSEL ATTRIBUTES -------------------------- */
 
+/* -------------------------- PS_PULSES ATTRIBUTE -------------------------- */
+
+// Number of pulses emitted per PS measurement (0–255, raw 8-bit value)
+
+static ssize_t apds9999_ps_pulses_show(struct device *dev, struct device_attribute *attr, char *buf){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = regmap_read(data->regmap, APDS9999_REG_PS_PULSES, &val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_read PS_PULSES failed.\n");
+		return ret;
+	}
+
+	return sysfs_emit(buf, "%u\n", val);
+}
+
+static ssize_t apds9999_ps_pulses_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	if (val > 0xFF)
+		return -EINVAL;
+
+	dev_info(&indio_dev->dev, "Proximity Sensor pulse count will be set to %u.\n", val);
+
+	ret = regmap_write(data->regmap, APDS9999_REG_PS_PULSES, val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_write PS_PULSES failed.\n");
+		return ret;
+	}
+
+	return len;
+}
+
+/* -------------------------- END PS_PULSES ATTRIBUTE -------------------------- */
+
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -1078,6 +1127,9 @@ static IIO_DEVICE_ATTR(sai_ls, 0644, apds9999_attr_bool_show, apds9999_attr_bool
 static IIO_DEVICE_ATTR(ps_vcsel_freq_khz, 0644, apds9999_vcsel_freq_show, apds9999_vcsel_freq_store, 0);
 static IIO_DEVICE_ATTR(ps_vcsel_curr_ma, 0644, apds9999_vcsel_curr_show, apds9999_vcsel_curr_store, 0);
 
+// PS_PULSES register: number of pulses per PS measurement
+static IIO_DEVICE_ATTR(ps_pulses, 0644, apds9999_ps_pulses_show, apds9999_ps_pulses_store, 0);
+
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
     // MAIN_CTRL register
@@ -1089,6 +1141,8 @@ static struct attribute *apds9999_attributes[] = {
 	// PS_VCSEL register
 	&iio_dev_attr_ps_vcsel_freq_khz.dev_attr.attr,
 	&iio_dev_attr_ps_vcsel_curr_ma.dev_attr.attr,
+	// PS_PULSES register
+	&iio_dev_attr_ps_pulses.dev_attr.attr,
 
 	NULL,	/* the attribute array must be NULL terminated */
 };
