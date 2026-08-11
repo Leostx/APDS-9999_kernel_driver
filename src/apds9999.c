@@ -535,6 +535,13 @@ static const unsigned int apds9999_vcsel_freq_lut[] = { 60, 70, 80, 90, 100 }; /
 // APDS9999_PS_VCSEL_CURR_DEF (0b110) is the reset default but its mA value is not documented
 static const unsigned int apds9999_vcsel_curr_lut[] = { 10, 25 }; /* mA */
 
+// LUT for PS resolution in bits, indexed by register field value (0–3)
+static const unsigned int apds9999_ps_reso_lut[] = { 8, 9, 10, 11 }; /* bits */
+
+// LUT for PS measurement rate in microseconds, indexed by (field_val - 1) for values 1–7
+// 0b000 is reserved; 0b001 = 6.25 ms, ..., 0b111 = 400 ms
+static const unsigned int apds9999_ps_rate_lut[] = { 6250, 12500, 25000, 50000, 100000, 200000, 400000 }; /* µs */
+
 
 // This table is for converting the light sensor readings to lux values - this comes from the datasheet
 // Resolution (lux/count) indexed by [gain][resolution]
@@ -1115,6 +1122,130 @@ static ssize_t apds9999_ps_pulses_store(struct device *dev, struct device_attrib
 
 /* -------------------------- END PS_PULSES ATTRIBUTE -------------------------- */
 
+/* -------------------------- PS_MEAS_RATE ATTRIBUTES -------------------------- */
+// PS resolution (bits) and measurement rate (µs)
+
+/* --- PS resolution --- */
+
+static ssize_t apds9999_ps_reso_show(struct device *dev, struct device_attribute *attr, char *buf) {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int bits;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_RESO], &bits);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_read PS_RESO failed.\n");
+		return ret;
+	}
+
+	// bits is 2 bits wide (0–3), always in range
+	return sysfs_emit(buf, "%u bit\n", apds9999_ps_reso_lut[bits]);
+}
+
+static ssize_t apds9999_ps_reso_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len) {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int input;
+	unsigned int write_val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &input);
+	if (ret)
+		return ret;
+
+	// accept raw register bits (0–3) or bit-count (8–11)
+	if (input <= APDS9999_PS_RESO_11_BIT)
+		write_val = input;
+	else if (input <= 8)
+		write_val = APDS9999_PS_RESO_8_BIT;
+	else if (input <= 9)
+		write_val = APDS9999_PS_RESO_9_BIT;
+	else if (input <= 10)
+		write_val = APDS9999_PS_RESO_10_BIT;
+	else
+		write_val = APDS9999_PS_RESO_11_BIT;
+
+	dev_info(&indio_dev->dev, "Proximity Sensor resolution will be set to %u bit (bits: %u).\n",
+			apds9999_ps_reso_lut[write_val], write_val);
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_PS_RESO], write_val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_write PS_RESO failed.\n");
+		return ret;
+	}
+
+	return len;
+}
+
+/* --- PS measurement rate --- */
+
+static ssize_t apds9999_ps_meas_rate_show(struct device *dev, struct device_attribute *attr, char *buf) {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int bits;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_RATE], &bits);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_read PS_RATE failed.\n");
+		return ret;
+	}
+
+	if (bits >= APDS9999_PS_RATE_6_25_MS && bits <= APDS9999_PS_RATE_400_MS)
+		return sysfs_emit(buf, "%u us\n", apds9999_ps_rate_lut[bits - APDS9999_PS_RATE_6_25_MS]);
+
+	// bit pattern 0b000 is reserved so maybe it will appear
+	return sysfs_emit(buf, "raw:%u\n", bits);
+}
+
+static ssize_t apds9999_ps_meas_rate_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len) {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int input;
+	unsigned int write_val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &input);
+	if (ret)
+		return ret;
+
+	// accept raw register bits (1–7) or a rate in µs
+	if (input >= APDS9999_PS_RATE_6_25_MS && input <= APDS9999_PS_RATE_400_MS)
+		write_val = input;
+	else if (input <= 6250)
+		write_val = APDS9999_PS_RATE_6_25_MS;
+	else if (input <= 12500)
+		write_val = APDS9999_PS_RATE_12_5_MS;
+	else if (input <= 25000)
+		write_val = APDS9999_PS_RATE_25_MS;
+	else if (input <= 50000)
+		write_val = APDS9999_PS_RATE_50_MS;
+	else if (input <= 100000)
+		write_val = APDS9999_PS_RATE_100_MS;
+	else if (input <= 200000)
+		write_val = APDS9999_PS_RATE_200_MS;
+	else
+		write_val = APDS9999_PS_RATE_400_MS;
+
+	dev_info(&indio_dev->dev, "Proximity Sensor measurement rate will be set to %u us (bits: %u).\n",
+			apds9999_ps_rate_lut[write_val - APDS9999_PS_RATE_6_25_MS], write_val);
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_PS_RATE], write_val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_write PS_RATE failed.\n");
+		return ret;
+	}
+
+	return len;
+}
+
+/* -------------------------- END PS_MEAS_RATE ATTRIBUTES -------------------------- */
+
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -1131,6 +1262,10 @@ static IIO_DEVICE_ATTR(ps_vcsel_curr_ma, 0644, apds9999_vcsel_curr_show, apds999
 // PS_PULSES register: number of pulses per PS measurement
 static IIO_DEVICE_ATTR(ps_pulses, 0644, apds9999_ps_pulses_show, apds9999_ps_pulses_store, 0);
 
+// PS_MEAS_RATE register: PS resolution and measurement rate
+static IIO_DEVICE_ATTR(ps_reso_bit, 0644, apds9999_ps_reso_show, apds9999_ps_reso_store, 0);
+static IIO_DEVICE_ATTR(ps_meas_rate_us, 0644, apds9999_ps_meas_rate_show, apds9999_ps_meas_rate_store, 0);
+
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
     // MAIN_CTRL register
@@ -1144,6 +1279,9 @@ static struct attribute *apds9999_attributes[] = {
 	&iio_dev_attr_ps_vcsel_curr_ma.dev_attr.attr,
 	// PS_PULSES register
 	&iio_dev_attr_ps_pulses.dev_attr.attr,
+	// PS_MEAS_RATE register
+	&iio_dev_attr_ps_reso_bit.dev_attr.attr,
+	&iio_dev_attr_ps_meas_rate_us.dev_attr.attr,
 
 	NULL,	/* the attribute array must be NULL terminated */
 };
