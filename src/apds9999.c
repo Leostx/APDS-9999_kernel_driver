@@ -939,15 +939,21 @@ static ssize_t apds9999_attr_bool_store(struct device *dev, struct device_attrib
 
 
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
+
+// these are the controll bits from the MAIN_CTRL register
 static IIO_DEVICE_ATTR(ps_enable, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_PS_EN);
 static IIO_DEVICE_ATTR(ls_enable, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_LS_EN);
-static IIO_DEVICE_ATTR(rgb_mode,  0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_RGB_MODE);
+static IIO_DEVICE_ATTR(rgb_mode, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_RGB_MODE);
+static IIO_DEVICE_ATTR(sai_ps, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_SAI_PS);
+static IIO_DEVICE_ATTR(sai_ls, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_SAI_LS);
 
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
 	&iio_dev_attr_ps_enable.dev_attr.attr,
 	&iio_dev_attr_ls_enable.dev_attr.attr,
 	&iio_dev_attr_rgb_mode.dev_attr.attr,
+	&iio_dev_attr_sai_ps.dev_attr.attr,
+	&iio_dev_attr_sai_ls.dev_attr.attr,
 	NULL,	/* the attribute array must be NULL terminated */
 };
 
@@ -990,8 +996,9 @@ static int apds9999_chip_init(struct apds9999_data *data){
 	// We write the SW_RESET bit to the MAIN_CTRL register to trigger the reset
 	// So we reset the chip also during a warm reboot without a power cycle
 	// This disables everything else since we write the full register, but it doesnt matter since we are performing the reset anyway
+	// the error code we exclude is because the chip does not respond with an ack, since it has been reset
 	ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET);
-	if(ret){
+	if (ret != -EREMOTEIO) {
 		dev_err(&data->indio_dev->dev, "software reset failed.\n");
 		return ret;
 	}
@@ -1056,7 +1063,7 @@ static int apds9999_probe(struct i2c_client *client){
 
 	data->client = client;
 	data->indio_dev = indio_dev;
-	
+
 	// TODO explain this better
 	ret = devm_regmap_field_bulk_alloc(&client->dev, data->regmap,
 					   data->regfield,
