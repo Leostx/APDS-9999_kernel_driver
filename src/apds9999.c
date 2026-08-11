@@ -542,6 +542,13 @@ static const unsigned int apds9999_ps_reso_lut[] = { 8, 9, 10, 11 }; /* bits */
 // 0b000 is reserved; 0b001 = 6.25 ms, ..., 0b111 = 400 ms
 static const unsigned int apds9999_ps_rate_lut[] = { 6250, 12500, 25000, 50000, 100000, 200000, 400000 }; /* µs */
 
+// LUT for LS resolution in bits, indexed by register field value (0–5)
+// 0b110 and 0b111 are reserved and not present in the table
+static const unsigned int apds9999_ls_reso_lut[] = { 20, 19, 18, 17, 16, 13 }; /* bits */
+
+// LUT for LS measurement rate in milliseconds, indexed by register field value (0–6)
+static const unsigned int apds9999_ls_rate_lut[] = { 25, 50, 100, 200, 500, 1000, 2000, 2000 }; /* ms */
+
 
 // This table is for converting the light sensor readings to lux values - this comes from the datasheet
 // Resolution (lux/count) indexed by [gain][resolution]
@@ -1246,6 +1253,137 @@ static ssize_t apds9999_ps_meas_rate_store(struct device *dev, struct device_att
 
 /* -------------------------- END PS_MEAS_RATE ATTRIBUTES -------------------------- */
 
+/* -------------------------- LS_MEAS_RATE ATTRIBUTES -------------------------- */
+// LS resolution (bits) and measurement rate (ms) from the LS_MEAS_RATE register
+
+/* --- LS resolution --- */
+
+static ssize_t apds9999_ls_reso_show(struct device *dev, struct device_attribute *attr, char *buf) {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int bits;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_LS_RESO], &bits);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_read LS_RESO failed.\n");
+		return ret;
+	}
+
+	// bits 0b110 and 0b111 are reserved
+	if (bits <= APDS9999_LS_RESO_13_BIT_3_125_MS)
+		return sysfs_emit(buf, "%u bit\n", apds9999_ls_reso_lut[bits]);
+
+	return sysfs_emit(buf, "raw:%u\n", bits);
+}
+
+static ssize_t apds9999_ls_reso_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len) {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int input;
+	unsigned int write_val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &input);
+	if (ret)
+		return ret;
+
+	// accept raw register bits (0–5) or a bit-count (13–20)
+	if (input <= APDS9999_LS_RESO_13_BIT_3_125_MS)
+		write_val = input;
+	else if (input <= 13)
+		write_val = APDS9999_LS_RESO_13_BIT_3_125_MS;
+	else if (input <= 16)
+		write_val = APDS9999_LS_RESO_16_BIT_25_MS;
+	else if (input <= 17)
+		write_val = APDS9999_LS_RESO_17_BIT_50_MS;
+	else if (input <= 18)
+		write_val = APDS9999_LS_RESO_18_BIT_100_MS;
+	else if (input <= 19)
+		write_val = APDS9999_LS_RESO_19_BIT_200_MS;
+	else
+		write_val = APDS9999_LS_RESO_20_BIT_400_MS;
+
+	dev_info(&indio_dev->dev, "Light Sensor resolution will be set to %u bit (bits: %u).\n",
+			apds9999_ls_reso_lut[write_val], write_val);
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_LS_RESO], write_val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_write LS_RESO failed.\n");
+		return ret;
+	}
+
+	return len;
+}
+
+/* --- LS measurement rate --- */
+
+static ssize_t apds9999_ls_meas_rate_show(struct device *dev, struct device_attribute *attr, char *buf) {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int bits;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_LS_RATE], &bits);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_read LS_RATE failed.\n");
+		return ret;
+	}
+
+	// bit pattern 0b111 is reserved
+	if (bits <= APDS9999_LS_RATE_2000_MS)
+		return sysfs_emit(buf, "%u ms\n", apds9999_ls_rate_lut[bits]);
+
+	return sysfs_emit(buf, "raw:%u\n", bits);
+}
+
+static ssize_t apds9999_ls_meas_rate_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len) {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int input;
+	unsigned int write_val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &input);
+	if (ret)
+		return ret;
+
+	// accept raw register bits (0–6) or a rate in ms
+	if (input <= APDS9999_LS_RATE_2000_MS)
+		write_val = input;
+	else if (input <= 25)
+		write_val = APDS9999_LS_RATE_25_MS;
+	else if (input <= 50)
+		write_val = APDS9999_LS_RATE_50_MS;
+	else if (input <= 100)
+		write_val = APDS9999_LS_RATE_100_MS;
+	else if (input <= 200)
+		write_val = APDS9999_LS_RATE_200_MS;
+	else if (input <= 500)
+		write_val = APDS9999_LS_RATE_500_MS;
+	else if (input <= 1000)
+		write_val = APDS9999_LS_RATE_1000_MS;
+	else
+		write_val = APDS9999_LS_RATE_2000_MS;
+
+	dev_info(&indio_dev->dev, "Light Sensor measurement rate will be set to %u ms (bits: %u).\n",
+			apds9999_ls_rate_lut[write_val], write_val);
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_LS_RATE], write_val);
+	if (ret) {
+		dev_err(&indio_dev->dev, "regmap_field_write LS_RATE failed.\n");
+		return ret;
+	}
+
+	return len;
+}
+
+/* -------------------------- END LS_MEAS_RATE ATTRIBUTES -------------------------- */
+
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -1266,6 +1404,10 @@ static IIO_DEVICE_ATTR(ps_pulses, 0644, apds9999_ps_pulses_show, apds9999_ps_pul
 static IIO_DEVICE_ATTR(ps_reso_bit, 0644, apds9999_ps_reso_show, apds9999_ps_reso_store, 0);
 static IIO_DEVICE_ATTR(ps_meas_rate_us, 0644, apds9999_ps_meas_rate_show, apds9999_ps_meas_rate_store, 0);
 
+// LS_MEAS_RATE register: LS resolution and measurement rate
+static IIO_DEVICE_ATTR(ls_reso_bit, 0644, apds9999_ls_reso_show, apds9999_ls_reso_store, 0);
+static IIO_DEVICE_ATTR(ls_meas_rate_ms, 0644, apds9999_ls_meas_rate_show, apds9999_ls_meas_rate_store, 0);
+
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
     // MAIN_CTRL register
@@ -1282,6 +1424,9 @@ static struct attribute *apds9999_attributes[] = {
 	// PS_MEAS_RATE register
 	&iio_dev_attr_ps_reso_bit.dev_attr.attr,
 	&iio_dev_attr_ps_meas_rate_us.dev_attr.attr,
+	// LS_MEAS_RATE register
+	&iio_dev_attr_ls_reso_bit.dev_attr.attr,
+	&iio_dev_attr_ls_meas_rate_ms.dev_attr.attr,
 
 	NULL,	/* the attribute array must be NULL terminated */
 };
