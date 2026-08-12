@@ -711,15 +711,47 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 				case IIO_PROXIMITY:
 					ret = apds9999_read_ps_raw(data, chan->address, val);
 					break;
-				case IIO_INTENSITY:
+				case IIO_INTENSITY: {
+					// RGB channels are only valid when RGB mode is enabled
+					unsigned int rgb_mode;
+
+					// read the rgb mode from the register
+					ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
+					if (ret)
+						return ret;
+
+					if (!rgb_mode){
+					    dev_err(&data->indio_dev->dev, "not in rgb mode: cannot read rgb channels.\n");
+						return -EFAULT; /* EFAULT: Bad address */
+					}
+
 					ret = apds9999_read_ls_raw(data, chan->address, val);
 					break;
+				}
 				default:
 					ret = -EINVAL;
 			}
 			break;
 		case IIO_CHAN_INFO_PROCESSED:
 			switch (chan->type) {
+				// IIO_LIGHT is the illuminance (ALS) channel
+				// It is the greeen channel when the RGB mode is disabled
+				case IIO_LIGHT: {
+					unsigned int rgb_mode;
+
+					// read the rgb mode from the register
+					ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
+					if (ret)
+						return ret;
+
+					if (rgb_mode){
+					    dev_err(&data->indio_dev->dev, "in rgb mode: cannot read the intensity channel.\n");
+						return -EFAULT; /* EFAULT: Bad address */
+					}
+
+					// fallthrough to the IIO_INTENSITY case
+					fallthrough;
+				}
 				case IIO_INTENSITY: {
 					// variable to hold the resolution setting
 					unsigned int reso;
@@ -752,9 +784,12 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 						return ret;
 					}
 
+					// if we are in IIO_LIGHT mode, use the green (ALS) register directly
+					unsigned int addr = (chan->type == IIO_LIGHT) ? APDS9999_REG_LS_DATA_GREEN_0 : chan->address;
+
 					// here we read the raw ls value into val
-					ret = apds9999_read_ls_raw(data, chan->address, val);
-					// here we scale the val by a constant we retrieve from the map based on gain and resolution
+					ret = apds9999_read_ls_raw(data, addr, val);
+					// scale the raw value to lux using the gain/resolution lookup table
 					*val = *val * ls_lux_conversion_map_milli[gain][reso] / 1000;
 
 					break;
