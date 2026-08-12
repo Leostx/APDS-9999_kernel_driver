@@ -28,6 +28,9 @@
  * - [ ] what are events?
  * - [ ] should we use scale for the channels?
  * - [ ] is it ok to use the custom attributes or do we need to use the IIO channel masks?
+ * - [ ] check why read_avail does not show up
+ * - [ ] create an available for the custom sysfs attributes
+ * - [ ]
  * - [ ]
  * - [ ]
  * - [ ]
@@ -629,27 +632,31 @@ static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address
 	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
 	int ret = -EINVAL;
 
-	// regmap_reads takes the regmap, the register and a pointer to store the value there
-	ret = regmap_read(data->regmap, APDS9999_REG_PS_MEAS_RATE, &setting);
+	// read the resolution setting. This should get cached by regmap if read multiple times consecutively
+	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_RESO], &setting);
 	// if regmap reading the settings failed, return early with the error code
 	if(ret){
 		dev_err(&data->indio_dev->dev, "regmap reading ps resolution failed.\n");
 		return ret;
 	}
 
-	// extract the resolution fields from the read register
-	setting = FIELD_GET(APDS9999_PS_RESO, setting);
-
+	// TODO: TESTING
 	// if the resolution is smaller or eqaul to n-bits, read a single register, otherwise read both
 	if(setting <= APDS9999_PS_RESO_8_BIT){
-		ret = regmap_read(data->regmap, address, val);
+		unsigned int tmp;
+		ret = regmap_read(data->regmap, address, &tmp);
+		if (!ret)
+			*val = (int)tmp;
 	}else {
 		// little endian 16-bit value is to buffer our 2-register read
 		__le16 regs;
 		// regmap bulk read takes the number of bytes to read as the last argument
 		ret = regmap_bulk_read(data->regmap, address, &regs, 2);
-		// convert the final value to cpu endianness and save it in val
-		*val = le16_to_cpu(regs);
+		if(!ret)
+			// convert the final value to cpu endianness and save it in val
+			*val = le16_to_cpu(regs);
+
+		//TODO handle the overflow case
 	}
 
 	// if ret is 0, everything went fine. Inform the caller that we read an int
@@ -668,16 +675,17 @@ static int apds9999_read_ls_raw(struct apds9999_data *data, unsigned int address
 	// TODO check if this works also on lower resolution settings or if we get spurios MSBs
 
 	// little endian 32-bit value is to buffer our 3-register read
-	__le32 buf;
+	// we have to initialize it to 0 to avoid garbage values
+	__le32 buf = 0;
 	// regmap bulk read takes the number of bytes to read as the last argument
 	ret = regmap_bulk_read(data->regmap, address, &buf, 3);
-	// convert the final value to cpu endianness and save it in val
-	*val = le32_to_cpu(buf);
+	if (!ret){
+		// convert the final value to cpu endianness and save it in val
+		*val = le32_to_cpu(buf);
 
-
-	// if ret is 0, everything went fine. Inform the caller that we read an int
-	if (!ret)
+		// if ret is 0, everything went fine. Inform the caller that we read an int
 		ret = IIO_VAL_INT;
+	}
 
 	return ret;
 }
