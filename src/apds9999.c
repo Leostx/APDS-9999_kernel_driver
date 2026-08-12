@@ -334,14 +334,16 @@
 }
 
 // This is the channel definition for the intensity channels - parameters are color and scan index
-#define APDS9999_INTENSITY_CHANNEL(_color, _si) { 			\
-	.type           = IIO_INTENSITY,						\
-	.modified       = 1,									\
-	.channel2       = IIO_MOD_LIGHT_##_color,				\
-	.address        = APDS9999_REG_LS_DATA_##_color##_0,	\
-	.scan_index     = _si,									\
-	.scan_type      = APDS9999_INTENSITY_SCAN_TYPE,			\
-	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),			\
+// gain is shared: all intensity channels map to the same physical LS_GAIN register
+#define APDS9999_INTENSITY_CHANNEL(_color, _si) { 				\
+	.type                    = IIO_INTENSITY,						\
+	.modified                = 1,									\
+	.channel2                = IIO_MOD_LIGHT_##_color,				\
+	.address                 = APDS9999_REG_LS_DATA_##_color##_0,	\
+	.scan_index              = _si,									\
+	.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,		\
+	.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW),				\
+	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN),	\
 }
 
 /* ------------------- END IIO CHANNEL DEFINES ------------------- */
@@ -553,7 +555,8 @@ static const unsigned int apds9999_ls_rate_lut[] = { 25, 50, 100, 200, 500, 1000
 
 // LUT for LS gain multiplier, indexed by register field value (0–4)
 // bits 0b101 through 0b111 are reserved and not present in the table
-static const unsigned int apds9999_ls_gain_lut[] = { 1, 3, 6, 9, 18 }; /* x */
+// type is int so that read_avail can hand the pointer directly to the IIO core
+static const int apds9999_ls_gain_lut[] = { 1, 3, 6, 9, 18 }; /* x */
 
 
 // This table is for converting the light sensor readings to lux values - this comes from the datasheet
@@ -610,10 +613,11 @@ static const struct iio_chan_spec apds9999_channels[] = {
 
 	/* Ambien Light Sensor (ALS) - This is the same as the green channel, it depends on the configuration */
 	{
-		.type           = IIO_LIGHT,
-		.scan_index     = 5,
-		.scan_type      = APDS9999_INTENSITY_SCAN_TYPE,
-		.info_mask_separate = BIT(IIO_CHAN_INFO_PROCESSED),	/* TODO adjust this */
+		.type                    = IIO_LIGHT,
+		.scan_index              = 5,
+		.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,
+		.info_mask_separate      = BIT(IIO_CHAN_INFO_PROCESSED),	/* TODO adjust this */
+		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN),
 	},
 
 };
@@ -690,7 +694,6 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 	// retrive the pointer to the data that is associated with our iio device
 	struct apds9999_data *data = iio_priv(indio_dev);
 
-
 	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
 	int ret = -EINVAL;
 
@@ -752,7 +755,28 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 					return -EINVAL;
 			}
 			break;
-		// TODO other cases such as scale etc
+			case IIO_CHAN_INFO_HARDWAREGAIN: {
+				// hardware gain is only available for light sensor channels
+				unsigned int bits;
+
+				if (chan->type != IIO_INTENSITY && chan->type != IIO_LIGHT)
+					return -EINVAL;
+
+				ret = regmap_field_read(data->regfield[APDS9999_RF_LS_GAIN_RANGE], &bits);
+				if (ret) {
+					dev_err(&data->indio_dev->dev, "regmap_field_read LS_GAIN_RANGE failed.\n");
+					return ret;
+				}
+
+				// bits 0b101 through 0b111 are not used
+				if (bits >= APDS9999_LS_GAIN_RANGE_18)
+					return -EIO;
+
+				// return the actual gain multiplier as an integer value
+				*val = apds9999_ls_gain_lut[bits];
+				return IIO_VAL_INT;
+			}
+			// TODO other cases such as scale etc
 	}
 
 	return ret;
@@ -769,137 +793,31 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 	int ret = -EINVAL;
 
 	switch (mask) {
+		case IIO_CHAN_INFO_HARDWAREGAIN: {
+			// hardware gain can only be set for light sensor channels
+			if (chan->type != IIO_INTENSITY && chan->type != IIO_LIGHT)
+				return -EINVAL;
 
-	    // resolution has to be set. not available in iio_chan_info_enum
-		// case IIO_CHAN_INFO_RESOLUTION:
-		// 	switch (chan->type) {
-		// 		case IIO_PROXIMITY:
-		// 			if (val < 8 || val > 11){
-		// 				dev_err(indio_dev, "proximity sensor resolution should be between 8 and 11 bit.\n");
-		// 				return ret;
-		// 			}
+			if (val == 1)
+				to_write = APDS9999_LS_GAIN_RANGE_1;
+			else if (val == 3)
+				to_write = APDS9999_LS_GAIN_RANGE_3;
+			else if (val == 6)
+				to_write = APDS9999_LS_GAIN_RANGE_6;
+			else if (val == 9)
+				to_write = APDS9999_LS_GAIN_RANGE_9;
+			else if (val == 18)
+				to_write = APDS9999_LS_GAIN_RANGE_18;
+			else
+				return -EINVAL;
 
-		// 			// from the datasheet we get, that we just have option 0-3
-		// 			to_write = val - 8;
-		// 			// this performs a read, modify, write cycle
-		// 			/* regmap, register to write, mask to use, what to write */
-		// 			ret = regmap_update_bits(data->regmap, APDS9999_REG_PS_MEAS_RATE, APDS9999_PS_RESO, to_write);
-		// 			if(ret){
-		// 				dev_err(indio_dev, "failed updating proximity sensor resolution.\n");
-		// 				return ret;
-		// 			}
-
-		// 			break;
-		// 		case IIO_INTENSITY:
-		// 			if (val < 13 || val > 20){
-		// 				dev_err(indio_dev, "light sensor resolution should be between 13 and 20 bit.\n");
-		// 				return ret;
-		// 			}
-
-		// 			// from the datasheet we get, that we just have option 0-5. They are linera, with a jump. Option with id 5 is actually 13 bit
-		// 			if(val == 13){
-		// 				to_write = 5
-		// 			}else{
-		// 				to_write = 20 - val;
-		// 			}
-		// 			// this performs a read, modify, write cycle
-		// 			/* regmap, register to write, mask to use, what to write */
-		// 			ret = regmap_update_bits(data->regmap, APDS9999_REG_LS_MEAS_RATE, APDS9999_LS_RESO, to_write);
-		// 			if(ret){
-		// 				dev_err(indio_dev, "failed updating light sensor resolution.\n");
-		// 				return ret;
-		// 			}
-
-		// 			break;
-		// 		default:
-		// 			return -EINVAL;
-		// 	}
-		// 	break;
-		case IIO_CHAN_INFO_SAMP_FREQ:
-			switch (chan->type) {
-				case IIO_PROXIMITY:
-					if(val > 200){
-						to_write = APDS9999_PS_RATE_400_MS;
-					}else if(val > 100){
-						to_write = APDS9999_PS_RATE_200_MS;
-					}else if(val > 50){
-						to_write = APDS9999_PS_RATE_100_MS;
-					}else if(val > 25){
-						to_write = APDS9999_PS_RATE_50_MS;
-					}else if(val > 12){
-						to_write = APDS9999_PS_RATE_25_MS;
-					}else if(val > 6){
-						to_write = APDS9999_PS_RATE_12_5_MS;
-					}else{
-						to_write = APDS9999_PS_RATE_6_25_MS;
-					}
-					// TODO may add some debug info
-
-					// this performs a read, modify, write cycle
-					/* regmap, register to write, mask to use, what to write */
-					ret = regmap_update_bits(data->regmap, APDS9999_REG_PS_MEAS_RATE, APDS9999_PS_RATE, to_write);
-					if(ret){
-						dev_err(&data->indio_dev->dev, "failed updating proximity sensor measurment rate.\n");
-						return ret;
-					}
-
-					break;
-				case IIO_INTENSITY:
-					if(val > 1000){
-						to_write = APDS9999_LS_RATE_2000_MS;
-					}else if(val > 500){
-						to_write = APDS9999_LS_RATE_1000_MS;
-					}else if(val > 200){
-						to_write = APDS9999_LS_RATE_500_MS;
-					}else if(val > 100){
-						to_write = APDS9999_LS_RATE_200_MS;
-					}else if(val > 50){
-						to_write = APDS9999_LS_RATE_100_MS;
-					}else if(val > 25){
-						to_write = APDS9999_LS_RATE_50_MS;
-					}else{
-						to_write = APDS9999_LS_RATE_25_MS;
-					}
-					// TODO may add some debug info
-
-					// this performs a read, modify, write cycle
-					/* regmap, register to write, mask to use, what to write */
-					ret = regmap_update_bits(data->regmap, APDS9999_REG_LS_MEAS_RATE, APDS9999_LS_RATE, to_write);
-					if(ret){
-						dev_err(&data->indio_dev->dev, "failed updating light sensor measurment rate.\n");
-						return ret;
-					}
-
-					break;
-				default:
-					return -EINVAL;
+			ret = regmap_field_write(data->regfield[APDS9999_RF_LS_GAIN_RANGE], to_write);
+			if (ret) {
+				dev_err(&data->indio_dev->dev, "regmap_field_write LS_GAIN_RANGE failed.\n");
+				return ret;
 			}
 			break;
-		case IIO_CHAN_INFO_HARDWAREGAIN:
-			// Just the light channels have a gain that can be set in LS_GAIN
-			if(chan->type == IIO_INTENSITY) {
-					if(val > 9){
-						to_write = APDS9999_LS_GAIN_RANGE_18;
-					}else if(val > 6){
-						to_write = APDS9999_LS_GAIN_RANGE_9;
-					}else if(val > 3){
-						to_write = APDS9999_LS_GAIN_RANGE_6;
-					}else if(val > 1){
-						to_write = APDS9999_LS_GAIN_RANGE_3;
-					}else{
-						to_write = APDS9999_LS_GAIN_RANGE_1;
-					}
-					// TODO may add some debug info
-
-					// this performs a read, modify, write cycle
-					/* regmap, register to write, mask to use, what to write */
-					ret = regmap_update_bits(data->regmap, APDS9999_REG_LS_GAIN, APDS9999_LS_GAIN_RANGE, to_write);
-					if(ret){
-						dev_err(&data->indio_dev->dev, "failed updating light sensor gain.\n");
-						return ret;
-					}
-			}
-			break;
+		}
 		default:
 			ret = -EINVAL;
 	}
@@ -907,6 +825,22 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 	return ret;
 }
 
+// this function is called by the IIO core when userspace reads an "_available" sysfs file
+// it returns the list of discrete valid values for the given info mask
+static int apds9999_read_avail(struct iio_dev *indio_dev, struct iio_chan_spec const *chan,
+				const int **vals, int *type, int *length, long mask)
+{
+	switch (mask) {
+		case IIO_CHAN_INFO_HARDWAREGAIN:
+			// expose the five discrete gain multipliers {1, 3, 6, 9, 18} that LS_GAIN supports
+			*vals   = apds9999_ls_gain_lut;
+			*type   = IIO_VAL_INT;
+			*length = ARRAY_SIZE(apds9999_ls_gain_lut);
+			return IIO_AVAIL_LIST;
+		default:
+			return -EINVAL;
+	}
+}
 
 /* -------------------------- CUSTOM SYSFS ATTRIBUTES -------------------------- */
 // Here we have custom sysfs attributs to get the full control over our driver
@@ -1390,73 +1324,6 @@ static ssize_t apds9999_ls_meas_rate_store(struct device *dev, struct device_att
 
 /* -------------------------- END LS_MEAS_RATE ATTRIBUTES -------------------------- */
 
-/* -------------------------- LS_GAIN ATTRIBUTE -------------------------- */
-// LS analog gain multiplier from the LS_GAIN register
-
-static ssize_t apds9999_ls_gain_show(struct device *dev, struct device_attribute *attr, char *buf) {
-    // retrieve the iio_dev, then the driver data associated with it
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct apds9999_data *data = iio_priv(indio_dev);
-
-	unsigned int bits;
-	int ret;
-
-	ret = regmap_field_read(data->regfield[APDS9999_RF_LS_GAIN_RANGE], &bits);
-	if (ret) {
-		dev_err(&indio_dev->dev, "regmap_field_read LS_GAIN_RANGE failed.\n");
-		return ret;
-	}
-
-	// bits 0b101 through 0b111 are not used
-	if (bits <= APDS9999_LS_GAIN_RANGE_18)
-		return sysfs_emit(buf, "%ux\n", apds9999_ls_gain_lut[bits]);
-
-	// bit pattern not in table
-	return sysfs_emit(buf, "raw:%u\n", bits);
-}
-
-static ssize_t apds9999_ls_gain_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len) {
-    // retrieve the iio_dev, then the driver data associated with it
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct apds9999_data *data = iio_priv(indio_dev);
-
-	unsigned int input;
-	unsigned int write_val;
-	int ret;
-
-	// read the input as an unsigned integer
-	ret = kstrtouint(buf, 0, &input);
-	if (ret)
-		return ret;
-
-	// accept only the exact gain multiplier values documented in the datasheet
-	if (input == 1)
-		write_val = APDS9999_LS_GAIN_RANGE_1;
-	else if (input == 3)
-		write_val = APDS9999_LS_GAIN_RANGE_3;
-	else if (input == 6)
-		write_val = APDS9999_LS_GAIN_RANGE_6;
-	else if (input == 9)
-		write_val = APDS9999_LS_GAIN_RANGE_9;
-	else if (input == 18)
-		write_val = APDS9999_LS_GAIN_RANGE_18;
-	else
-		return -EINVAL;
-
-	dev_info(&indio_dev->dev, "Light Sensor gain will be set to %ux (bits: %u).\n",
-			apds9999_ls_gain_lut[write_val], write_val);
-
-	ret = regmap_field_write(data->regfield[APDS9999_RF_LS_GAIN_RANGE], write_val);
-	if (ret) {
-		dev_err(&indio_dev->dev, "regmap_field_write LS_GAIN_RANGE failed.\n");
-		return ret;
-	}
-
-	return len;
-}
-
-/* -------------------------- END LS_GAIN ATTRIBUTE -------------------------- */
-
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -1481,9 +1348,6 @@ static IIO_DEVICE_ATTR(ps_meas_rate_us, 0644, apds9999_ps_meas_rate_show, apds99
 static IIO_DEVICE_ATTR(ls_reso_bit, 0644, apds9999_ls_reso_show, apds9999_ls_reso_store, 0);
 static IIO_DEVICE_ATTR(ls_meas_rate_ms, 0644, apds9999_ls_meas_rate_show, apds9999_ls_meas_rate_store, 0);
 
-// LS_GAIN register: LS analog gain multiplier
-static IIO_DEVICE_ATTR(ls_gain, 0644, apds9999_ls_gain_show, apds9999_ls_gain_store, 0);
-
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
     // MAIN_CTRL register
@@ -1503,8 +1367,6 @@ static struct attribute *apds9999_attributes[] = {
 	// LS_MEAS_RATE register
 	&iio_dev_attr_ls_reso_bit.dev_attr.attr,
 	&iio_dev_attr_ls_meas_rate_ms.dev_attr.attr,
-	// LS_GAIN register
-	&iio_dev_attr_ls_gain.dev_attr.attr,
 
 	NULL,	/* the attribute array must be NULL terminated */
 };
@@ -1514,9 +1376,10 @@ static const struct attribute_group apds9999_attribute_group = {
 };
 
 static const struct iio_info apds9999_info = {
-    .attrs = &apds9999_attribute_group,	/* exposes custom attributes in sysfs */
-	.read_raw = apds9999_read_raw,
-	.write_raw = apds9999_write_raw,
+	.attrs      = &apds9999_attribute_group,	/* exposes custom attributes in sysfs */
+	.read_raw   = apds9999_read_raw,
+	.write_raw  = apds9999_write_raw,
+	.read_avail = apds9999_read_avail,			/* exposes _available sysfs files for enumerable settings */
 };
 
 // this function gets called during probe to initialize the chip
