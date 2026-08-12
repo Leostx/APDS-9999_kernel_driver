@@ -30,7 +30,7 @@
  * - [ ] is it ok to use the custom attributes or do we need to use the IIO channel masks?
  * - [ ] check why read_avail does not show up
  * - [ ] create an available for the custom sysfs attributes
- * - [ ]
+ * - [ ] return ls_lux_conversion_map_milli as scale
  * - [ ]
  * - [ ]
  * - [ ]
@@ -338,15 +338,15 @@
 
 // This is the channel definition for the intensity channels - parameters are color and scan index
 // gain is shared: all intensity channels map to the same physical LS_GAIN register
-#define APDS9999_INTENSITY_CHANNEL(_color, _si) { 				\
-	.type                    = IIO_INTENSITY,						\
-	.modified                = 1,									\
-	.channel2                = IIO_MOD_LIGHT_##_color,				\
-	.address                 = APDS9999_REG_LS_DATA_##_color##_0,	\
-	.scan_index              = _si,									\
-	.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,		\
-	.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW),				\
-	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN),	\
+#define APDS9999_INTENSITY_CHANNEL(_color, _si) { 				                        \
+	.type                    = IIO_INTENSITY,						                    \
+	.modified                = 1,									                    \
+	.channel2                = IIO_MOD_LIGHT_##_color,				                    \
+	.address                 = APDS9999_REG_LS_DATA_##_color##_0,	                    \
+	.scan_index              = _si,									                    \
+	.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,		                    \
+	.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW) |	BIT(IIO_CHAN_INFO_PROCESSED),   \
+	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN),	                    \
 }
 
 /* ------------------- END IIO CHANNEL DEFINES ------------------- */
@@ -562,11 +562,11 @@ static const unsigned int apds9999_ls_rate_lut[] = { 25, 50, 100, 200, 500, 1000
 static const int apds9999_ls_gain_lut[] = { 1, 3, 6, 9, 18 }; /* x */
 
 
-// This table is for converting the light sensor readings to lux values - this comes from the datasheet
-// Resolution (lux/count) indexed by [gain][resolution]
+// This table is for converting the light sensor readings to mLux values - this comes from the datasheet
+// Resolution (mLux/count) indexed by [gain][resolution]
 // Gain indices: 0=1x, 1=3x, 2=6x, 3=9x, 4=18x
 // Resolution indices: 0=20bit, 1=19bit, 2=18bit, 3=17bit, 4=16bit
-static const int ls_lux_conversion_map_milli[5][5] = {
+static const int ls_mlux_conversion_map_milli[5][5] = {
     { 136, 273, 548, 1099, 2193 }, 			/* 1x   */
     { 45,  90,  180, 359,  722 }, 			/* 3x   */
     { 22,  45,  90,  179,  360 }, 			/* 6x   */
@@ -619,7 +619,7 @@ static const struct iio_chan_spec apds9999_channels[] = {
 		.type                    = IIO_LIGHT,
 		.scan_index              = 5,
 		.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,
-		.info_mask_separate      = BIT(IIO_CHAN_INFO_PROCESSED),	/* TODO adjust this */
+		.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW) | BIT(IIO_CHAN_INFO_PROCESSED),
 		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN),
 	},
 
@@ -690,6 +690,50 @@ static int apds9999_read_ls_raw(struct apds9999_data *data, unsigned int address
 	return ret;
 }
 
+static int apds9999_read_ls_processed(struct apds9999_data *data, unsigned int address, int *val){
+    // variable to hold the resolution setting
+	unsigned int reso;
+	// variable to hold the gain setting
+	unsigned int gain;
+
+	int ret = -EINVAL;
+
+	// regmap_reads takes the regmap, the register and a pointer to store the value there
+	ret = regmap_read(data->regmap, APDS9999_REG_LS_MEAS_RATE, &reso);
+	// if regmap reading the settings failed, return early with the error code
+	if(ret){
+		dev_err(&data->indio_dev->dev, "regmap reading ls resolution failed.\n");
+		return ret;
+	}
+	// regmap_reads takes the regmap, the register and a pointer to store the value there
+	ret = regmap_read(data->regmap, APDS9999_REG_LS_GAIN, &gain);
+	// if regmap reading the settings failed, return early with the error code
+	if(ret){
+		dev_err(&data->indio_dev->dev, "regmap reading ls gain failed.\n");
+		return ret;
+	}
+
+	// extract the resolution fields from the read register
+	reso = FIELD_GET(APDS9999_LS_RESO, reso);
+	// extract the resolution fields from the read register
+	gain = FIELD_GET(APDS9999_LS_GAIN_RANGE, gain);
+
+	if(reso == APDS9999_LS_RESO_13_BIT_3_125_MS){
+		dev_err(&data->indio_dev->dev, "13-bit ls resolution has no scaling factor. \n");
+		return ret;
+	}
+
+	// here we read the raw ls value into val
+	ret = apds9999_read_ls_raw(data, address, val);
+	if(ret)
+		return ret;
+
+	// scale the raw value to lux using the gain/resolution lookup table
+	*val = *val * ls_mlux_conversion_map_milli[gain][reso] / 1000;
+
+	return IIO_VAL_FRACTIONAL;
+}
+
 // This callback gets executed when reading raw or scale from sysfs
 /*
  * indio_dev: 		iio device
@@ -711,6 +755,22 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 				case IIO_PROXIMITY:
 					ret = apds9999_read_ps_raw(data, chan->address, val);
 					break;
+				case IIO_LIGHT: {
+					// ALS (green channel) is only valid when RGB mode is disabled
+					unsigned int rgb_mode;
+
+					ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
+					if (ret)
+						return ret;
+
+					if (rgb_mode) {
+						dev_err(&data->indio_dev->dev, "in rgb mode: cannot read the ALS channel raw.\n");
+						return -EFAULT;
+					}
+
+					ret = apds9999_read_ls_raw(data, APDS9999_REG_LS_DATA_GREEN_0, val);
+					break;
+				}
 				case IIO_INTENSITY: {
 					// RGB channels are only valid when RGB mode is enabled
 					unsigned int rgb_mode;
@@ -749,50 +809,20 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 						return -EFAULT; /* EFAULT: Bad address */
 					}
 
-					// fallthrough to the IIO_INTENSITY case
-					fallthrough;
+					return apds9999_read_ls_processed(data, APDS9999_REG_LS_DATA_GREEN_0, val);
 				}
 				case IIO_INTENSITY: {
-					// variable to hold the resolution setting
-					unsigned int reso;
-					// variable to hold the gain setting
-					unsigned int gain;
-
-
-					// regmap_reads takes the regmap, the register and a pointer to store the value there
-					ret = regmap_read(data->regmap, APDS9999_REG_LS_MEAS_RATE, &reso);
-					// if regmap reading the settings failed, return early with the error code
-					if(ret){
-						dev_err(&data->indio_dev->dev, "regmap reading ls resolution failed.\n");
+					// RGB channels require RGB mode
+					unsigned int rgb_mode;
+					ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
+					if (ret)
 						return ret;
-					}
-					// regmap_reads takes the regmap, the register and a pointer to store the value there
-					ret = regmap_read(data->regmap, APDS9999_REG_LS_GAIN, &gain);
-					// if regmap reading the settings failed, return early with the error code
-					if(ret){
-						dev_err(&data->indio_dev->dev, "regmap reading ls gain failed.\n");
-						return ret;
+					if (!rgb_mode) {
+						dev_err(&data->indio_dev->dev, "not in rgb mode: cannot read rgb channels.\n");
+						return -EFAULT;
 					}
 
-					// extract the resolution fields from the read register
-					reso = FIELD_GET(APDS9999_LS_RESO, reso);
-					// extract the resolution fields from the read register
-					gain = FIELD_GET(APDS9999_LS_GAIN_RANGE, gain);
-
-					if(reso == APDS9999_LS_RESO_13_BIT_3_125_MS){
-						dev_err(&data->indio_dev->dev, "13-bit ls resolution has no scaling factor. \n");
-						return ret;
-					}
-
-					// if we are in IIO_LIGHT mode, use the green (ALS) register directly
-					unsigned int addr = (chan->type == IIO_LIGHT) ? APDS9999_REG_LS_DATA_GREEN_0 : chan->address;
-
-					// here we read the raw ls value into val
-					ret = apds9999_read_ls_raw(data, addr, val);
-					// scale the raw value to lux using the gain/resolution lookup table
-					*val = *val * ls_lux_conversion_map_milli[gain][reso] / 1000;
-
-					break;
+					return apds9999_read_ls_processed(data, chan->address, val);
 				}
 				default:
 					return -EINVAL;
