@@ -24,13 +24,9 @@
  * - [ ] active_scan_mask
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
  * - [ ] thresholds
- * - [ ] ps scale
  * - [ ] what are events?
- * - [ ] should we use scale for the channels?
- * - [ ] is it ok to use the custom attributes or do we need to use the IIO channel masks?
  * - [ ] check why read_avail does not show up
  * - [ ] create an available for the custom sysfs attributes
- * - [ ] return ls_lux_conversion_map_milli as scale
  * - [ ]
  * - [ ]
  * - [ ]
@@ -338,15 +334,15 @@
 
 // This is the channel definition for the intensity channels - parameters are color and scan index
 // gain is shared: all intensity channels map to the same physical LS_GAIN register
-#define APDS9999_INTENSITY_CHANNEL(_color, _si) { 				                        \
-	.type                    = IIO_INTENSITY,						                    \
-	.modified                = 1,									                    \
-	.channel2                = IIO_MOD_LIGHT_##_color,				                    \
-	.address                 = APDS9999_REG_LS_DATA_##_color##_0,	                    \
-	.scan_index              = _si,									                    \
-	.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,		                    \
-	.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW) |	BIT(IIO_CHAN_INFO_PROCESSED),   \
-	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN),	                    \
+#define APDS9999_INTENSITY_CHANNEL(_color, _si) { 				                            \
+	.type                    = IIO_INTENSITY,						                        \
+	.modified                = 1,									                        \
+	.channel2                = IIO_MOD_LIGHT_##_color,				                        \
+	.address                 = APDS9999_REG_LS_DATA_##_color##_0,	                        \
+	.scan_index              = _si,									                        \
+	.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,		                        \
+	.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW) |	BIT(IIO_CHAN_INFO_PROCESSED),       \
+	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN) | BIT(IIO_CHAN_INFO_SCALE), \
 }
 
 /* ------------------- END IIO CHANNEL DEFINES ------------------- */
@@ -620,7 +616,7 @@ static const struct iio_chan_spec apds9999_channels[] = {
 		.scan_index              = 5,
 		.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,
 		.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW) | BIT(IIO_CHAN_INFO_PROCESSED),
-		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN),
+		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN) | BIT(IIO_CHAN_INFO_SCALE),
 	},
 
 };
@@ -690,7 +686,7 @@ static int apds9999_read_ls_raw(struct apds9999_data *data, unsigned int address
 	return ret;
 }
 
-static int apds9999_read_ls_processed(struct apds9999_data *data, unsigned int address, int *val){
+static int apds9999_read_ls_processed(struct apds9999_data *data, unsigned int address, int *val, int *val2){
     // variable to hold the resolution setting
 	unsigned int reso;
 	// variable to hold the gain setting
@@ -698,38 +694,39 @@ static int apds9999_read_ls_processed(struct apds9999_data *data, unsigned int a
 
 	int ret = -EINVAL;
 
-	// regmap_reads takes the regmap, the register and a pointer to store the value there
-	ret = regmap_read(data->regmap, APDS9999_REG_LS_MEAS_RATE, &reso);
-	// if regmap reading the settings failed, return early with the error code
+	// read the resolution field
+	ret = regmap_field_read(data->regfield[APDS9999_RF_LS_RESO], &reso);
 	if(ret){
 		dev_err(&data->indio_dev->dev, "regmap reading ls resolution failed.\n");
 		return ret;
 	}
-	// regmap_reads takes the regmap, the register and a pointer to store the value there
-	ret = regmap_read(data->regmap, APDS9999_REG_LS_GAIN, &gain);
-	// if regmap reading the settings failed, return early with the error code
+	// read the gain field
+	ret = regmap_field_read(data->regfield[APDS9999_RF_LS_GAIN_RANGE], &gain);
 	if(ret){
 		dev_err(&data->indio_dev->dev, "regmap reading ls gain failed.\n");
 		return ret;
 	}
 
-	// extract the resolution fields from the read register
-	reso = FIELD_GET(APDS9999_LS_RESO, reso);
-	// extract the resolution fields from the read register
-	gain = FIELD_GET(APDS9999_LS_GAIN_RANGE, gain);
-
+	// 13-bit mode (0b101) has no entry in the conversion table
 	if(reso == APDS9999_LS_RESO_13_BIT_3_125_MS){
-		dev_err(&data->indio_dev->dev, "13-bit ls resolution has no scaling factor. \n");
-		return ret;
+		dev_err(&data->indio_dev->dev, "13-bit ls resolution has no scaling factor.\n");
+		return -EINVAL;
 	}
 
-	// here we read the raw ls value into val
+	// undefined gain values (0b101-0b111) have no entry in the conversion table
+	if(gain > APDS9999_LS_GAIN_RANGE_18){
+		dev_err(&data->indio_dev->dev, "undefined ls gain value.\n");
+		return -EINVAL;
+	}
+
+	// here we read the raw ls count into val
 	ret = apds9999_read_ls_raw(data, address, val);
-	if(ret)
+	if(ret < 0)
 		return ret;
 
 	// scale the raw value to lux using the gain/resolution lookup table
-	*val = *val * ls_mlux_conversion_map_milli[gain][reso] / 1000;
+	*val  = *val * ls_mlux_conversion_map_milli[gain][reso];
+	*val2 = 1000;
 
 	return IIO_VAL_FRACTIONAL;
 }
@@ -809,7 +806,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 						return -EFAULT; /* EFAULT: Bad address */
 					}
 
-					return apds9999_read_ls_processed(data, APDS9999_REG_LS_DATA_GREEN_0, val);
+					return apds9999_read_ls_processed(data, APDS9999_REG_LS_DATA_GREEN_0, val, val2);
 				}
 				case IIO_INTENSITY: {
 					// RGB channels require RGB mode
@@ -822,7 +819,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 						return -EFAULT;
 					}
 
-					return apds9999_read_ls_processed(data, chan->address, val);
+					return apds9999_read_ls_processed(data, chan->address, val, val2);
 				}
 				default:
 					return -EINVAL;
@@ -842,15 +839,49 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 				}
 
 				// bits 0b101 through 0b111 are not used
-				if (bits >= APDS9999_LS_GAIN_RANGE_18)
+				if (bits > APDS9999_LS_GAIN_RANGE_18)
 					return -EIO;
 
 				// return the actual gain multiplier as an integer value
 				*val = apds9999_ls_gain_lut[bits];
 				return IIO_VAL_INT;
 			}
-			// TODO other cases such as scale etc
-	}
+			case IIO_CHAN_INFO_SCALE: {
+				unsigned int reso, gain;
+
+				if (chan->type != IIO_LIGHT && chan->type != IIO_INTENSITY)
+					return -EINVAL;
+
+				ret = regmap_field_read(data->regfield[APDS9999_RF_LS_RESO], &reso);
+				if (ret) {
+					dev_err(&data->indio_dev->dev, "regmap_field_read LS_RESO failed.\n");
+					return ret;
+				}
+
+				ret = regmap_field_read(data->regfield[APDS9999_RF_LS_GAIN_RANGE], &gain);
+				if (ret) {
+					dev_err(&data->indio_dev->dev, "regmap_field_read LS_GAIN_RANGE failed.\n");
+					return ret;
+				}
+
+				// 13-bit mode (0b101) has no defined scaling factor
+				if (reso == APDS9999_LS_RESO_13_BIT_3_125_MS) {
+					dev_err(&data->indio_dev->dev, "13-bit ls resolution has no scaling factor.\n");
+					return -EINVAL;
+				}
+
+				// gain values above 18x (0b100) are not defined
+				if (gain > APDS9999_LS_GAIN_RANGE_18) {
+					dev_err(&data->indio_dev->dev, "not defined LS gain value.\n");
+					return -EIO;
+				}
+
+				// scale = mLux_per_count / 1000 => Lux/count
+				*val  = ls_mlux_conversion_map_milli[gain][reso];
+				*val2 = 1000;
+				return IIO_VAL_FRACTIONAL;
+			}
+		}
 
 	return ret;
 }
