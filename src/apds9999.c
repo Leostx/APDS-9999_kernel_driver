@@ -39,7 +39,6 @@
 #include <linux/regmap.h>
 #include <linux/bitfield.h>     // FIELD_PREP & FIELD_GET
 #include <linux/bits.h>         // BIT & GENMASK
-#include <linux/regmap.h>
 #include <linux/device.h>       // dev_err, dev_info, dev_warn
 #include <linux/errno.h>        // error codes like -EINVAL, -ENODEV
 #include <linux/types.h>        // types like __le16
@@ -225,7 +224,6 @@
 #define APDS9999_FIELD_STATUS_LS_DATA   REG_FIELD(APDS9999_REG_MAIN_STATUS, 3, 3)
 #define APDS9999_FIELD_STATUS_PS_INT    REG_FIELD(APDS9999_REG_MAIN_STATUS, 1, 1)
 #define APDS9999_FIELD_STATUS_PS_DATA   REG_FIELD(APDS9999_REG_MAIN_STATUS, 0, 0)
-
 
 // The following are the special bits for PS_DATA - regards PS_DATA_1
 #define APDS9999_REG_PS_DATA_1_OVRFLW	BIT(3)	/* does the measurement lie outside of the measurable range */
@@ -615,6 +613,7 @@ static const struct iio_chan_spec apds9999_channels[] = {
 	/* Ambien Light Sensor (ALS) - This is the same as the green channel, it depends on the configuration */
 	{
 		.type                    = IIO_LIGHT,
+		.address                 = APDS9999_REG_LS_DATA_GREEN_0,
 		.scan_index              = 5,
 		.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,
 		.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW) | BIT(IIO_CHAN_INFO_PROCESSED),
@@ -765,7 +764,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 
 					if (rgb_mode) {
 						dev_err(&data->indio_dev->dev, "in rgb mode: cannot read the ALS channel raw.\n");
-						return -EFAULT;
+						return -EBUSY;
 					}
 
 					ret = apds9999_read_ls_raw(data, APDS9999_REG_LS_DATA_GREEN_0, val);
@@ -782,7 +781,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 
 					if (!rgb_mode){
 					    dev_err(&data->indio_dev->dev, "not in rgb mode: cannot read rgb channels.\n");
-						return -EFAULT; /* EFAULT: Bad address */
+						return -EBUSY;
 					}
 
 					ret = apds9999_read_ls_raw(data, chan->address, val);
@@ -806,7 +805,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 
 					if (rgb_mode){
 					    dev_err(&data->indio_dev->dev, "in rgb mode: cannot read the intensity channel.\n");
-						return -EFAULT; /* EFAULT: Bad address */
+						return -EBUSY;
 					}
 
 					return apds9999_read_ls_processed(data, APDS9999_REG_LS_DATA_GREEN_0, val, val2);
@@ -819,7 +818,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 						return ret;
 					if (!rgb_mode) {
 						dev_err(&data->indio_dev->dev, "not in rgb mode: cannot read rgb channels.\n");
-						return -EFAULT;
+						return -EBUSY;
 					}
 
 					return apds9999_read_ls_processed(data, chan->address, val, val2);
@@ -1210,7 +1209,7 @@ static ssize_t apds9999_ps_reso_store(struct device *dev, struct device_attribut
 	if (ret)
 		return ret;
 
-	// accept raw register bits (0–3) or bit-count (8–11)
+	// accept raw register bits (0–3) or bit-count (8–11). Rounds to the nearest valid value
 	if (input <= APDS9999_PS_RESO_11_BIT)
 		write_val = input;
 	else if (input <= 8)
@@ -1520,8 +1519,9 @@ static int apds9999_chip_init(struct apds9999_data *data){
 	// This disables everything else since we write the full register, but it doesnt matter since we are performing the reset anyway
 	// the error code we exclude is because the chip does not respond with an ack, since it has been reset
 	ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET);
-	if (ret != -EREMOTEIO) { /* EREMOTEIO: "Remote I/O error" */
-		dev_err(&data->indio_dev->dev, "software reset failed.\n");
+	// After a successful reset the chip does not ACK. So -EREMOTEIO is expected, everything else is a failure
+	if (ret && ret != -EREMOTEIO) { /* EREMOTEIO: "Remote I/O error" */
+		dev_err(&data->indio_dev->dev, "software reset failed: %d\n", ret);
 		return ret;
 	}
 
