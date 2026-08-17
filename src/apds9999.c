@@ -24,7 +24,6 @@
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
  * - [ ] thresholds
  * - [ ] what are events?
- * - [ ] check why read_avail does not show up
  * - [ ] create an available for the custom sysfs attributes
  * - [ ]
  * - [ ]
@@ -930,9 +929,7 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 
 // this function is called by the IIO core when userspace reads an "_available" sysfs file
 // it returns the list of discrete valid values for the given info mask
-static int apds9999_read_avail(struct iio_dev *indio_dev, struct iio_chan_spec const *chan,
-				const int **vals, int *type, int *length, long mask)
-{
+static int apds9999_read_avail(struct iio_dev *indio_dev, struct iio_chan_spec const *chan, const int **vals, int *type, int *length, long mask){
 	switch (mask) {
 		case IIO_CHAN_INFO_HARDWAREGAIN:
 			// expose the five discrete gain multipliers {1, 3, 6, 9, 18} that LS_GAIN supports
