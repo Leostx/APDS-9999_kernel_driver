@@ -19,7 +19,6 @@
  *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
  *       and regulator handling still missing
  * - [ ] of_device_id table for device tree compatibility?
- * - [ ] overflow bits of the measurement registers
  * - [ ] implement triggers
  * - [ ] active_scan_mask
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
@@ -627,6 +626,8 @@ static const struct iio_chan_spec apds9999_channels[] = {
 static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address, int *val){
 	// variable to hold the resolution setting
 	unsigned int setting;
+	// regmap bulk read result
+	__le16 regs;
 	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
 	int ret = -EINVAL;
 
@@ -638,23 +639,19 @@ static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address
 		return ret;
 	}
 
-	// TODO: TESTING
-	// if the resolution is smaller or eqaul to n-bits, read a single register, otherwise read both
-	if(setting <= APDS9999_PS_RESO_8_BIT){
-		unsigned int tmp;
-		ret = regmap_read(data->regmap, address, &tmp);
-		if (!ret)
-			*val = (int)tmp;
-	}else {
-		// little endian 16-bit value is to buffer our 2-register read
-		__le16 regs;
-		// regmap bulk read takes the number of bytes to read as the last argument
-		ret = regmap_bulk_read(data->regmap, address, &regs, 2);
-		if(!ret)
-			// convert the final value to cpu endianness and save it in val
-			*val = le16_to_cpu(regs);
+	// bulk read PS_DATA_0 and PS_DATA_1
+	ret = regmap_bulk_read(data->regmap, address, &regs, 2);
+	if (!ret) {
+        // get the full 16 bit value from the regmap bulk read result and convert it to cpu endianness
+		unsigned int raw = le16_to_cpu(regs);
 
-		//TODO handle the overflow case
+		// check if the measurement has overflown, by masking out the overflow bit
+		// we have to shift by 8 since we are using the full 16 bits
+		// return -1 if yes, otherwise return the reading since all more significant bits are 0
+		if (raw & (APDS9999_REG_PS_DATA_1_OVRFLW << 8))
+			*val = -1;
+		else
+			*val = raw;
 	}
 
 	// if ret is 0, everything went fine. Inform the caller that we read an int
