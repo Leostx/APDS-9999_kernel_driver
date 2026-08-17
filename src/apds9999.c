@@ -18,7 +18,6 @@
  * - [ ] power management basics: PS_EN / LS_EN / RGB_MODE now toggleable
  *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
  *       and regulator handling still missing
- * - [ ] of_device_id table for device tree compatibility?
  * - [ ] implement triggers
  * - [ ] active_scan_mask
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
@@ -41,7 +40,6 @@
 #include <linux/errno.h>        // error codes like -EINVAL, -ENODEV
 #include <linux/types.h>        // types like __le16
 //#include <linux/byteorder.h>    // byte order macros like le16_to_cpu
-#include <linux/property.h>     // may be needed later for device tree support // TODO
 #include <linux/iio/sysfs.h>    // IIO_DEVICE_ATTR for the custom sysfs attributes
 #include <linux/kstrtox.h>       // kstrtobool parses sysfs user input to boolean
 #include <linux/sysfs.h>         // sysfs_emit formats sysfs reads for custom attributes
@@ -1632,8 +1630,7 @@ static const struct i2c_device_id apds9999_idtable[] = {
 MODULE_DEVICE_TABLE(i2c, apds9999_idtable);
 
 static const struct of_device_id apds9999_oftable[] = {
-// inserire il pointer .data
-//	{ .compatible = "apds9999", .data = (void*)data },
+	{ .compatible = "brcm,apds9999" },
 	{ }
 };
 
@@ -1641,7 +1638,8 @@ MODULE_DEVICE_TABLE(of, apds9999_oftable);
 
 static struct i2c_driver apds9999_driver = {
       .driver = {
-              .name   = APDS9999_DRIVER_NAME,   // this is the drivers name and should match the modules name
+              .name           = APDS9999_DRIVER_NAME,   // this is the drivers name and should match the modules name
+              .of_match_table = apds9999_oftable,
       },
 
       .id_table       = apds9999_idtable,
