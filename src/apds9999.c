@@ -107,7 +107,7 @@
 #define APDS9999_FIELD_CTRL_LS_EN       REG_FIELD(APDS9999_REG_MAIN_CTRL, 1, 1)
 #define APDS9999_FIELD_CTRL_PS_EN       REG_FIELD(APDS9999_REG_MAIN_CTRL, 0, 0)
 
-// The following are the bits in PS_VCSEL - writing them restarts the PS state machine // TODO is this relevant?
+// The following are the bits in PS_VCSEL - writing them restarts the PS state machine
 #define APDS9999_PS_VCSEL_FREQ      GENMASK(6, 4)
 #define APDS9999_PS_VCSEL_CURR      GENMASK(2, 0)
 
@@ -1578,16 +1578,13 @@ static int apds9999_probe(struct i2c_client *client){
 	data->client = client;
 	data->indio_dev = indio_dev;
 
-	// TODO explain this better
-	ret = devm_regmap_field_bulk_alloc(&client->dev, data->regmap,
-					   data->regfield,
-					   apds9999_reg_fields,
-					   ARRAY_SIZE(apds9999_reg_fields));
+	// Allocates one regmap_field per apds9999_reg_fields[] entry
+	// pointers are stored in data->regfield[]
+	ret = devm_regmap_field_bulk_alloc(&client->dev, data->regmap, data->regfield, apds9999_reg_fields, ARRAY_SIZE(apds9999_reg_fields));
 	if (ret) {
 		dev_err(&client->dev, "regmap field bulk allocation failed.\n");
 		return ret;
 	}
-
 
 	// bring the chip into a known state and enable PS + LS by default
 	ret = apds9999_chip_init(data);
