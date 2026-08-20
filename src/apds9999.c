@@ -21,13 +21,10 @@
  * - [ ] implement triggers
  * - [ ] active_scan_mask
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
- * - [x] thresholds
- * - [x] what are events?
- * - [ ] create an available for the custom sysfs attributes
  * - [ ] IR should be valid also without RGB mode
- * - [ ] LS_INT_SEL field in INT_CFG
  * - [ ] mutex where?
  * - [ ] LS DATA STATUS
+ * - [ ] test events
  * - [ ]
  * - [ ]
  * - [ ]
@@ -540,6 +537,7 @@ enum apds9999_rf {
 /* ------------------- END REGMAP CONFIG ------------------- */
 
 /* ------------------- LOOK UP TABLES ------------------- */
+// This is what is used for conversion and what the *_available sysfs attributes show
 
 // LUT for VCSEL frequency (kHz)
 static const unsigned int apds9999_vcsel_freq_lut[] = { 60, 70, 80, 90, 100 }; /* kHz */
@@ -598,6 +596,38 @@ static const char * const apds9999_ps_logic_mode_names[] = {
 };
 
 /* ------------------- END LOOK UP TABLES ------------------- */
+
+/* ------------------- AVAILABLE VALUE TABLES ------------------- */
+
+enum apds9999_uint_avail_idx {
+	APDS9999_UINT_AVAIL_VCSEL_FREQ,
+	APDS9999_UINT_AVAIL_VCSEL_CURR,
+	APDS9999_UINT_AVAIL_PS_RESO,
+	APDS9999_UINT_AVAIL_PS_RATE,
+	APDS9999_UINT_AVAIL_LS_RESO,
+	APDS9999_UINT_AVAIL_LS_RATE,
+};
+
+static const struct { const unsigned int *lut; size_t count; } apds9999_uint_avail[] = {
+	[APDS9999_UINT_AVAIL_VCSEL_FREQ] = { apds9999_vcsel_freq_lut, ARRAY_SIZE(apds9999_vcsel_freq_lut) },
+	[APDS9999_UINT_AVAIL_VCSEL_CURR] = { apds9999_vcsel_curr_lut, ARRAY_SIZE(apds9999_vcsel_curr_lut) },
+	[APDS9999_UINT_AVAIL_PS_RESO]    = { apds9999_ps_reso_lut,    ARRAY_SIZE(apds9999_ps_reso_lut) },
+	[APDS9999_UINT_AVAIL_PS_RATE]    = { apds9999_ps_rate_lut,    ARRAY_SIZE(apds9999_ps_rate_lut) },
+	[APDS9999_UINT_AVAIL_LS_RESO]    = { apds9999_ls_reso_lut,    ARRAY_SIZE(apds9999_ls_reso_lut) },
+	[APDS9999_UINT_AVAIL_LS_RATE]    = { apds9999_ls_rate_lut,    ARRAY_SIZE(apds9999_ls_rate_lut) },
+};
+
+enum apds9999_str_avail_idx {
+	APDS9999_STR_AVAIL_LS_INT_SEL,
+	APDS9999_STR_AVAIL_PS_LOGIC_MODE,
+};
+
+static const struct { const char * const *names; size_t count; } apds9999_str_avail[] = {
+	[APDS9999_STR_AVAIL_LS_INT_SEL]    = { apds9999_ls_int_sel_names,    ARRAY_SIZE(apds9999_ls_int_sel_names) },
+	[APDS9999_STR_AVAIL_PS_LOGIC_MODE] = { apds9999_ps_logic_mode_names, ARRAY_SIZE(apds9999_ps_logic_mode_names) },
+};
+
+/* ------------------- END AVAILABLE VALUE TABLES ------------------- */
 
 /* ------------------- IIO EVENTS ------------------- */
 // The type of interrupt that our sensor produces mandates that we use events and not triggers
@@ -1499,6 +1529,41 @@ static ssize_t apds9999_vcsel_curr_store(struct device *dev, struct device_attri
 	return len;
 }
 
+static ssize_t apds9999_uint_avail_show(struct device *dev, struct device_attribute *attr, char *buf){
+    // index into apds9999_uint_avail is saved in the device attribute's address field
+	unsigned int idx = to_iio_dev_attr(attr)->address;
+
+	// pointer to the acctual lut
+	const unsigned int *lut = apds9999_uint_avail[idx].lut;
+	// size
+	size_t count = apds9999_uint_avail[idx].count;
+
+	int len = 0;
+	size_t i;
+	for (i = 0; i < count; i++)
+		len += sysfs_emit_at(buf, len, i < count - 1 ? "%u " : "%u\n", lut[i]);
+
+	return len;
+}
+
+static ssize_t apds9999_str_avail_show(struct device *dev, struct device_attribute *attr, char *buf){
+    // index into apds9999_str_avail is saved in the device attribute's address field
+	unsigned int idx = to_iio_dev_attr(attr)->address;
+
+	// pointer to the actual lut containing the names
+	const char * const *names = apds9999_str_avail[idx].names;
+	// size
+	size_t count = apds9999_str_avail[idx].count;
+
+	int len = 0;
+	size_t i;
+
+	for (i = 0; i < count; i++)
+		len += sysfs_emit_at(buf, len, i < count - 1 ? "%s " : "%s\n", names[i]);
+
+	return len;
+}
+
 /* -------------------------- END PS_VCSEL ATTRIBUTES -------------------------- */
 
 /* -------------------------- PS_PULSES ATTRIBUTE -------------------------- */
@@ -1834,9 +1899,7 @@ static ssize_t apds9999_ls_int_sel_store(struct device *dev, struct device_attri
 	return ret ? ret : len;
 }
 
-static ssize_t apds9999_ls_int_sel_available_show(struct device *dev, struct device_attribute *attr, char *buf){
-	return sysfs_emit(buf, "ir green red blue\n");
-}
+
 
 /* -------------------------- END LS_INT_SEL EVENT ATTRIBUTE -------------------------- */
 
@@ -1871,16 +1934,12 @@ static ssize_t apds9999_ps_logic_mode_store(struct device *dev, struct device_at
 	return ret ? ret : len;
 }
 
-static ssize_t apds9999_ps_logic_mode_available_show(struct device *dev, struct device_attribute *attr, char *buf){
-	return sysfs_emit(buf, "latched pulsed\n");
-}
-
 /* -------------------------- END PS_LOGIC_MODE EVENT ATTRIBUTE -------------------------- */
 
 static IIO_DEVICE_ATTR(ls_int_sel, 0644, apds9999_ls_int_sel_show, apds9999_ls_int_sel_store, 0);
-static IIO_DEVICE_ATTR(ls_int_sel_available, 0444, apds9999_ls_int_sel_available_show, NULL, 0);
+static IIO_DEVICE_ATTR(ls_int_sel_available, 0444, apds9999_str_avail_show, NULL, APDS9999_STR_AVAIL_LS_INT_SEL);
 static IIO_DEVICE_ATTR(ps_logic_mode, 0644, apds9999_ps_logic_mode_show, apds9999_ps_logic_mode_store, 0);
-static IIO_DEVICE_ATTR(ps_logic_mode_available, 0444, apds9999_ps_logic_mode_available_show, NULL, 0);
+static IIO_DEVICE_ATTR(ps_logic_mode_available, 0444, apds9999_str_avail_show, NULL, APDS9999_STR_AVAIL_PS_LOGIC_MODE);
 
 static struct attribute *apds9999_event_attributes[] = {
 	&iio_dev_attr_ls_int_sel.dev_attr.attr,
@@ -1906,18 +1965,24 @@ static IIO_DEVICE_ATTR(sai_ls, 0644, apds9999_attr_bool_show, apds9999_attr_bool
 
 // these are the controll bits from the PS_VCSEL register
 static IIO_DEVICE_ATTR(ps_vcsel_freq_khz, 0644, apds9999_vcsel_freq_show, apds9999_vcsel_freq_store, 0);
+static IIO_DEVICE_ATTR(ps_vcsel_freq_khz_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_VCSEL_FREQ);
 static IIO_DEVICE_ATTR(ps_vcsel_curr_ma, 0644, apds9999_vcsel_curr_show, apds9999_vcsel_curr_store, 0);
+static IIO_DEVICE_ATTR(ps_vcsel_curr_ma_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_VCSEL_CURR);
 
 // PS_PULSES register: number of pulses per PS measurement
 static IIO_DEVICE_ATTR(ps_pulses, 0644, apds9999_ps_pulses_show, apds9999_ps_pulses_store, 0);
 
 // PS_MEAS_RATE register: PS resolution and measurement rate
 static IIO_DEVICE_ATTR(ps_reso_bit, 0644, apds9999_ps_reso_show, apds9999_ps_reso_store, 0);
+static IIO_DEVICE_ATTR(ps_reso_bit_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_PS_RESO);
 static IIO_DEVICE_ATTR(ps_meas_rate_us, 0644, apds9999_ps_meas_rate_show, apds9999_ps_meas_rate_store, 0);
+static IIO_DEVICE_ATTR(ps_meas_rate_us_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_PS_RATE);
 
 // LS_MEAS_RATE register: LS resolution and measurement rate
 static IIO_DEVICE_ATTR(ls_reso_bit, 0644, apds9999_ls_reso_show, apds9999_ls_reso_store, 0);
+static IIO_DEVICE_ATTR(ls_reso_bit_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_LS_RESO);
 static IIO_DEVICE_ATTR(ls_meas_rate_ms, 0644, apds9999_ls_meas_rate_show, apds9999_ls_meas_rate_store, 0);
+static IIO_DEVICE_ATTR(ls_meas_rate_ms_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_LS_RATE);
 
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
@@ -1929,15 +1994,21 @@ static struct attribute *apds9999_attributes[] = {
 	&iio_dev_attr_sai_ls.dev_attr.attr,
 	// PS_VCSEL register
 	&iio_dev_attr_ps_vcsel_freq_khz.dev_attr.attr,
+	&iio_dev_attr_ps_vcsel_freq_khz_available.dev_attr.attr,
 	&iio_dev_attr_ps_vcsel_curr_ma.dev_attr.attr,
+	&iio_dev_attr_ps_vcsel_curr_ma_available.dev_attr.attr,
 	// PS_PULSES register
 	&iio_dev_attr_ps_pulses.dev_attr.attr,
 	// PS_MEAS_RATE register
 	&iio_dev_attr_ps_reso_bit.dev_attr.attr,
+	&iio_dev_attr_ps_reso_bit_available.dev_attr.attr,
 	&iio_dev_attr_ps_meas_rate_us.dev_attr.attr,
+	&iio_dev_attr_ps_meas_rate_us_available.dev_attr.attr,
 	// LS_MEAS_RATE register
 	&iio_dev_attr_ls_reso_bit.dev_attr.attr,
+	&iio_dev_attr_ls_reso_bit_available.dev_attr.attr,
 	&iio_dev_attr_ls_meas_rate_ms.dev_attr.attr,
+	&iio_dev_attr_ls_meas_rate_ms_available.dev_attr.attr,
 
 	NULL,	/* the attribute array must be NULL terminated */
 };
