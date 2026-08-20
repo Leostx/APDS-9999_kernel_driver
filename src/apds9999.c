@@ -1027,7 +1027,7 @@ static int apds9999_read_event_config(struct iio_dev *indio_dev, const struct ii
 }
 
 // This writes the controll registers for the events (interrupts). Sysfs: *_thresh_either_en
-static int apds9999_write_event_config(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir, int state){
+static int apds9999_write_event_config(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir, bool state){
 	struct apds9999_data *data = iio_priv(indio_dev);
 
 	switch (chan->type) {
