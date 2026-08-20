@@ -580,6 +580,23 @@ static const int ls_mlux_conversion_map_milli[5][5] = {
     { 7,   15,  29,   59,  117 }, 			/* 18x  */
 };
 
+
+// Maps the 2-bit LS_INT_SEL register value
+static const char * const apds9999_ls_int_sel_names[] = {
+	[APDS9999_INT_CFG_LS_INT_SEL_IR]        = "ir",
+	[APDS9999_INT_CFG_LS_INT_SEL_GREEN_ALS] = "green",
+	[APDS9999_INT_CFG_LS_INT_SEL_RED]       = "red",
+	[APDS9999_INT_CFG_LS_INT_SEL_BLUE]      = "blue",
+};
+
+// Maps the 1-bit PS_LOGIC_MODE register value
+// latched: INT signal stays active until the status register is cleared (bit=0)
+// pulsed:  INT signal is updated after every PS measurement             (bit=1)
+static const char * const apds9999_ps_logic_mode_names[] = {
+	[0] = "latched",
+	[1] = "pulsed",
+};
+
 /* ------------------- END LOOK UP TABLES ------------------- */
 
 /* ------------------- IIO EVENTS ------------------- */
@@ -1786,6 +1803,98 @@ static ssize_t apds9999_ls_meas_rate_store(struct device *dev, struct device_att
 
 /* -------------------------- END LS_MEAS_RATE ATTRIBUTES -------------------------- */
 
+/* -------------------------- LS_INT_SEL EVENT ATTRIBUTE -------------------------- */
+
+static ssize_t apds9999_ls_int_sel_show(struct device *dev, struct device_attribute *attr, char *buf){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_INT_CFG_LS_INT_SEL], &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%s\n", apds9999_ls_int_sel_names[val]);
+}
+
+static ssize_t apds9999_ls_int_sel_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	int ret;
+
+	// sysfs_match_string handles trailing newlines and is case-insensitive
+	ret = sysfs_match_string(apds9999_ls_int_sel_names, buf);
+	if (ret < 0)
+		return ret;
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_INT_CFG_LS_INT_SEL], ret);
+	return ret ? ret : len;
+}
+
+static ssize_t apds9999_ls_int_sel_available_show(struct device *dev, struct device_attribute *attr, char *buf){
+	return sysfs_emit(buf, "ir green red blue\n");
+}
+
+/* -------------------------- END LS_INT_SEL EVENT ATTRIBUTE -------------------------- */
+
+/* -------------------------- PS_LOGIC_MODE EVENT ATTRIBUTE -------------------------- */
+
+static ssize_t apds9999_ps_logic_mode_show(struct device *dev, struct device_attribute *attr, char *buf){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_INT_CFG_PS_LOGIC_MODE], &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%s\n", apds9999_ps_logic_mode_names[val]);
+}
+
+static ssize_t apds9999_ps_logic_mode_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	int ret;
+
+	// sysfs_match_string handles trailing newlines and is case-insensitive
+	ret = sysfs_match_string(apds9999_ps_logic_mode_names, buf);
+	if (ret < 0)
+		return ret;
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_INT_CFG_PS_LOGIC_MODE], ret);
+	return ret ? ret : len;
+}
+
+static ssize_t apds9999_ps_logic_mode_available_show(struct device *dev, struct device_attribute *attr, char *buf){
+	return sysfs_emit(buf, "latched pulsed\n");
+}
+
+/* -------------------------- END PS_LOGIC_MODE EVENT ATTRIBUTE -------------------------- */
+
+static IIO_DEVICE_ATTR(ls_int_sel, 0644, apds9999_ls_int_sel_show, apds9999_ls_int_sel_store, 0);
+static IIO_DEVICE_ATTR(ls_int_sel_available, 0444, apds9999_ls_int_sel_available_show, NULL, 0);
+static IIO_DEVICE_ATTR(ps_logic_mode, 0644, apds9999_ps_logic_mode_show, apds9999_ps_logic_mode_store, 0);
+static IIO_DEVICE_ATTR(ps_logic_mode_available, 0444, apds9999_ps_logic_mode_available_show, NULL, 0);
+
+static struct attribute *apds9999_event_attributes[] = {
+	&iio_dev_attr_ls_int_sel.dev_attr.attr,
+	&iio_dev_attr_ls_int_sel_available.dev_attr.attr,
+	&iio_dev_attr_ps_logic_mode.dev_attr.attr,
+	&iio_dev_attr_ps_logic_mode_available.dev_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group apds9999_event_attribute_group = {
+	.attrs = apds9999_event_attributes,
+};
+
+
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -1838,10 +1947,13 @@ static const struct attribute_group apds9999_attribute_group = {
 };
 
 static const struct iio_info apds9999_info = {
-	.attrs              = &apds9999_attribute_group,	/* exposes custom attributes in sysfs */
+	.attrs              = &apds9999_attribute_group,	    /* exposes custom attributes in sysfs */
+	.event_attrs        = &apds9999_event_attribute_group,	/* exposes custom attributes in events/ sysfs dir */
+
 	.read_raw           = apds9999_read_raw,
 	.write_raw          = apds9999_write_raw,
 	.read_avail         = apds9999_read_avail,			/* exposes _available sysfs files for enumerable settings */
+
 	/* The following is for the event interface (interrupts) */
 	.read_event_config  = apds9999_read_event_config,
 	.write_event_config = apds9999_write_event_config,
