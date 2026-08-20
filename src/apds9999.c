@@ -21,10 +21,14 @@
  * - [ ] implement triggers
  * - [ ] active_scan_mask
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
- * - [ ] thresholds
- * - [ ] what are events?
+ * - [x] thresholds
+ * - [x] what are events?
  * - [ ] create an available for the custom sysfs attributes
  * - [ ] IR should be valid also without RGB mode
+ * - [ ] LS_INT_SEL field in INT_CFG
+ * - [ ] mutex where?
+ * - [ ] LS DATA STATUS
+ * - [ ]
  * - [ ]
  * - [ ]
  * - [ ]
@@ -44,6 +48,8 @@
 #include <linux/iio/sysfs.h>    // IIO_DEVICE_ATTR for the custom sysfs attributes
 #include <linux/kstrtox.h>       // kstrtobool parses sysfs user input to boolean
 #include <linux/sysfs.h>         // sysfs_emit formats sysfs reads for custom attributes
+#include <linux/interrupt.h>     // request_threaded_irq, IRQ_WAKE_THREAD, IRQF_TRIGGER_LOW
+#include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
 
 // Driver Name - done as define, since we use it multiple times
 #define APDS9999_DRIVER_NAME 	"apds9999"
@@ -385,6 +391,12 @@ static const struct regmap_range apds9999_precious_ranges[] = {
 	*		when SAI_LS or SAI_PS are set, the LS_EN or PS_EN are cleared when this register is read
 	*/
 	regmap_reg_range(APDS9999_REG_MAIN_CTRL, APDS9999_REG_MAIN_CTRL),
+	/*
+	*	APDS9999_REG_MAIN_STATUS:
+	*       LS INTERRUPT STATUS, LS DATA STATUS, PS INTERRUPT STATUS, PS DATA STATUS
+	*       are cleared after reading, therefore they are precious
+	*/
+	regmap_reg_range(APDS9999_REG_MAIN_STATUS, APDS9999_REG_MAIN_STATUS),
 };
 
 static const struct regmap_access_table apds9999_precious_table = {
@@ -569,16 +581,52 @@ static const int ls_mlux_conversion_map_milli[5][5] = {
 
 /* ------------------- END LOOK UP TABLES ------------------- */
 
+/* ------------------- IIO EVENTS ------------------- */
+// The type of interrupt that our sensor produces mandates that we use events and not triggers
+// The sensor generates an interrupt when the reading crosses a threshold
 
-// This is the type of struct that will eventually hold the data that our driver needs to function
-struct apds9999_data {
-	struct i2c_client *client;
-	struct iio_dev *indio_dev;
-
-	struct regmap *regmap;
-	struct regmap_field *regfield[APDS9999_RF_COUNT];
+// This defines the events for the proximity sensor
+static const struct iio_event_spec apds9999_ps_events[] = {
+	{
+	    /* This defines the event for the upper threshold crossing. It is done to set the value of PS_THRES_UP */
+		.type          = IIO_EV_TYPE_THRESH,
+		.dir           = IIO_EV_DIR_RISING,
+		.mask_separate = BIT(IIO_EV_INFO_VALUE),
+	},
+	{
+	    /* Same thing for lower threshold. Should set the value of PS_THRES_LOW */
+		.type          = IIO_EV_TYPE_THRESH,
+		.dir           = IIO_EV_DIR_FALLING,
+		.mask_separate = BIT(IIO_EV_INFO_VALUE),
+	},
+	{
+	    /* This is for both events. Since we have single controll registers to enable and set the persistence. INT_CFG and INT_PST  */
+		.type          = IIO_EV_TYPE_THRESH,
+		.dir           = IIO_EV_DIR_EITHER,
+		.mask_separate = BIT(IIO_EV_INFO_ENABLE) | BIT(IIO_EV_INFO_PERIOD),
+	},
 };
 
+// This defines the events for the light sensor. The logic is as the ps one
+static const struct iio_event_spec apds9999_ls_events[] = {
+	{
+		.type          = IIO_EV_TYPE_THRESH,
+		.dir           = IIO_EV_DIR_RISING,
+		.mask_separate = BIT(IIO_EV_INFO_VALUE),
+	},
+	{
+		.type          = IIO_EV_TYPE_THRESH,
+		.dir           = IIO_EV_DIR_FALLING,
+		.mask_separate = BIT(IIO_EV_INFO_VALUE),
+	},
+	{
+		.type          = IIO_EV_TYPE_THRESH,
+		.dir           = IIO_EV_DIR_EITHER,
+		.mask_separate = BIT(IIO_EV_INFO_ENABLE) | BIT(IIO_EV_INFO_PERIOD),
+	},
+};
+
+/* ------------------- END IIO EVENTS ------------------- */
 
 // Here we will define all the channels that then get assigned to the iio once created
 static const struct iio_chan_spec apds9999_channels[] = {
@@ -599,7 +647,9 @@ static const struct iio_chan_spec apds9999_channels[] = {
 			.shift          = 0,
 			.endianness     = APDS9999_CH_ENDIANNESS,	/* This refers to the buffer used by the driver */
 		},
-		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+		.info_mask_separate  = BIT(IIO_CHAN_INFO_RAW),
+		.event_spec          = apds9999_ps_events,
+		.num_event_specs     = ARRAY_SIZE(apds9999_ps_events),
 	},
 
 	APDS9999_INTENSITY_CHANNEL(RED, 1),
@@ -616,8 +666,21 @@ static const struct iio_chan_spec apds9999_channels[] = {
 		.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW) | BIT(IIO_CHAN_INFO_PROCESSED),
 		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN) | BIT(IIO_CHAN_INFO_SCALE),
 		.info_mask_shared_by_type_available = BIT(IIO_CHAN_INFO_HARDWAREGAIN),
+		.event_spec          = apds9999_ls_events,
+		.num_event_specs     = ARRAY_SIZE(apds9999_ls_events),
 	},
 
+};
+
+// This is the type of struct that will eventually hold the data that our driver needs to function
+struct apds9999_data {
+	struct i2c_client *client;
+	struct iio_dev *indio_dev;
+
+	struct regmap *regmap;
+	struct regmap_field *regfield[APDS9999_RF_COUNT];
+
+	struct mutex lock;
 };
 
 // this function reads the raw value from the proximity sensor into val
@@ -940,6 +1003,245 @@ static int apds9999_read_avail(struct iio_dev *indio_dev, struct iio_chan_spec c
 			return -EINVAL;
 	}
 }
+
+/* ------------------- IIO EVENT CALLBACKS ------------------- */
+
+// This reads the controll registers for the events (interrupts). Sysfs: *_thresh_either_en
+static int apds9999_read_event_config(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir){
+	struct apds9999_data *data = iio_priv(indio_dev);
+	unsigned int val;
+	int ret;
+
+	switch (chan->type) {
+	    case IIO_PROXIMITY:
+	    	ret = regmap_field_read(data->regfield[APDS9999_RF_INT_CFG_PS_INT_EN], &val);
+	    	break;
+	    case IIO_LIGHT:
+	    	ret = regmap_field_read(data->regfield[APDS9999_RF_INT_CFG_LS_INT_EN], &val);
+	    	break;
+	    default:
+	    	return -EINVAL;
+	}
+
+	return ret ? ret : (int)val;
+}
+
+// This writes the controll registers for the events (interrupts). Sysfs: *_thresh_either_en
+static int apds9999_write_event_config(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir, int state){
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	switch (chan->type) {
+    	case IIO_PROXIMITY:
+            // The double explamation mark is to normalize the integer value to 0 or 1
+    		return regmap_field_write(data->regfield[APDS9999_RF_INT_CFG_PS_INT_EN], !!state);
+    	case IIO_LIGHT:
+    		return regmap_field_write(data->regfield[APDS9999_RF_INT_CFG_LS_INT_EN], !!state);
+    	default:
+    		return -EINVAL;
+	}
+}
+
+// This reads the threshold value or persistence count. *_THRESH_UP or *_THRESH_LOW or INT_PST
+// Sysfs: *_thresh_{rising,falling}_value or *_thresh_either_period
+static int apds9999_read_event_value(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir, enum iio_event_info info, int *val, int *val2){
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	int ret;
+
+	// This is the persistence filter value (1..16):
+	// Number of consecutive out-of-range measurements before the interrupt is asserted in hardware
+	if (info == IIO_EV_INFO_PERIOD) {
+
+	    // for saving the read value from the register
+		unsigned int reg_val;
+
+		switch (chan->type) {
+    		case IIO_PROXIMITY:
+                ret = regmap_field_read(data->regfield[APDS9999_RF_INT_PST_PS_PERS], &reg_val);
+    			break;
+    		case IIO_LIGHT:
+                ret = regmap_field_read(data->regfield[APDS9999_RF_INT_PST_LS_PERS], &reg_val);
+    			break;
+    		default:
+    			return -EINVAL;
+		}
+
+		if (ret)
+			return ret;
+
+		// Here we sum one, as the persistence value starts at 1
+		*val = reg_val + 1;
+
+		return IIO_VAL_INT;
+	}
+
+	// This handles the IIO_EV_INFO_VALUE, reading the threshold registers
+	switch (chan->type) {
+    	case IIO_PROXIMITY: {
+            // little-endian 16-bit buffer to save our two-byte register reads
+            __le16 buf16;
+            // select the right register based on the event direction
+    		unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_PS_THRES_UP_0 : APDS9999_REG_PS_THRES_LOW_0;
+
+            // Here we lock the mutex, such that the register read is atomic, since it is not provided by the hardware
+    		mutex_lock(&data->lock);
+    		ret = regmap_bulk_read(data->regmap, reg, &buf16, 2);
+    		mutex_unlock(&data->lock);
+
+    		if (ret)
+    			return ret;
+
+            // we do not mask the upper bits since the datasheet guarantees they are 0
+            // we just convert to host-endian int
+    		*val = le16_to_cpu(buf16);
+
+    		return IIO_VAL_INT;
+    	}
+    	case IIO_LIGHT: {
+            // little-endian 32-bit buffer to save our three-byte register reads
+            __le32 buf32;
+            // select the right register based on the event direction
+    		unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_LS_THRES_UP_0 : APDS9999_REG_LS_THRES_LOW_0;
+
+    		mutex_lock(&data->lock);
+    		ret = regmap_bulk_read(data->regmap, reg, &buf32, 3);
+    		mutex_unlock(&data->lock);
+
+    		if (ret)
+    			return ret;
+
+            // convert the final value to cpu endianness and save it in val
+            *val = le32_to_cpu(buf32);
+    		return IIO_VAL_INT;
+    	}
+    	default:
+    		return -EINVAL;
+	}
+}
+
+// This writes the threshold value or persistence count. *_THRESH_UP or *_THRESH_LOW or INT_PST
+// Sysfs: *_thresh_{rising,falling}_value or *_thresh_either_period
+static int apds9999_write_event_value(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir, enum iio_event_info info, int val, int val2){
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	int ret;
+
+	// this regards the persistence filter
+	if (info == IIO_EV_INFO_PERIOD) {
+
+		if (val < 1 || val > 16)
+			return -EINVAL;
+
+		// decrement val to convert from 1-based to 0-based persistence filter value
+		val--;
+
+		switch (chan->type) {
+    		case IIO_PROXIMITY:
+                ret = regmap_field_write(data->regfield[APDS9999_RF_INT_PST_PS_PERS], val);
+    			break;
+    		case IIO_LIGHT:
+                ret = regmap_field_write(data->regfield[APDS9999_RF_INT_PST_LS_PERS], val);
+    			break;
+    		default:
+    			return -EINVAL;
+		}
+
+		return ret;
+	}
+
+	// This handles the IIO_EV_INFO_VALUE, reading the threshold registers
+	switch (chan->type) {
+    	case IIO_PROXIMITY: {
+    		__le16 buf16;
+
+    		unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_PS_THRES_UP_0 : APDS9999_REG_PS_THRES_LOW_0;
+
+    		// PS threshold is 11-bit
+    		if (val < 0 || val > 0x7FF)
+    			return -EINVAL;
+
+    		buf16 = cpu_to_le16((u16)val);
+
+    		mutex_lock(&data->lock);
+    		ret = regmap_bulk_write(data->regmap, reg, &buf16, 2);
+    		mutex_unlock(&data->lock);
+
+    		return ret;
+    	}
+    	case IIO_LIGHT: {
+    		__le32 buf32;
+
+    		unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_LS_THRES_UP_0 : APDS9999_REG_LS_THRES_LOW_0;
+
+    		// LS threshold is 20-bit
+    		if (val < 0 || val > 0xFFFFF)
+    			return -EINVAL;
+
+            buf32 = cpu_to_le32((u32)val);
+
+    		mutex_lock(&data->lock);
+    		ret = regmap_bulk_write(data->regmap, reg, &buf32, 3);
+    		mutex_unlock(&data->lock);
+
+    		return ret;
+    	}
+    	default:
+    		return -EINVAL;
+	}
+}
+
+/* ------------------- END IIO EVENT CALLBACKS ------------------- */
+
+/* ------------------- INTERRUPT HANDLERS ------------------- */
+
+// Hard-IRQ handler. Runs in interrupt context, cannot handle I2C
+static irqreturn_t apds9999_irq_handler(int irq, void *p){
+    // Wake the threaded handler
+	return IRQ_WAKE_THREAD;
+}
+
+
+// This is the threaded IRQ handler it checks for interrupts and pushes events to userspace
+static irqreturn_t apds9999_irq_thread(int irq, void *p){
+	struct iio_dev *indio_dev = p;
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	// the status register is read into this
+	unsigned int status;
+	s64 timestamp;
+	int ret;
+
+
+	// reads and clears the main status register
+	ret = regmap_read(data->regmap, APDS9999_REG_MAIN_STATUS, &status);
+	if (ret) {
+		dev_err(&data->client->dev, "failed to read MAIN_STATUS: %d\n", ret);
+		return IRQ_HANDLED;
+	}
+
+	// get timestamp of event
+	timestamp = iio_get_time_ns(indio_dev);
+
+	// check if PS interrupt status is set
+	if (status & APDS9999_STATUS_PS_INT) {
+	    // we push the event with the dir either, since checking would require an additional read
+		iio_push_event(indio_dev,
+			       IIO_UNMOD_EVENT_CODE(IIO_PROXIMITY, 0, IIO_EV_TYPE_THRESH, IIO_EV_DIR_EITHER),
+			       timestamp);
+	}
+
+	// check if LS interrupt status is set
+	if (status & APDS9999_STATUS_LS_INT) {
+        // we push the event with the dir either, since checking would require an additional read
+		iio_push_event(indio_dev,
+			       IIO_UNMOD_EVENT_CODE(IIO_LIGHT, 0, IIO_EV_TYPE_THRESH, IIO_EV_DIR_EITHER),
+			       timestamp);
+	}
+
+	return IRQ_HANDLED;
+}
+
+/* ------------------- END INTERRUPT HANDLERS ------------------- */
 
 /* -------------------------- CUSTOM SYSFS ATTRIBUTES -------------------------- */
 // Here we have custom sysfs attributs to get the full control over our driver
@@ -1475,10 +1777,15 @@ static const struct attribute_group apds9999_attribute_group = {
 };
 
 static const struct iio_info apds9999_info = {
-	.attrs      = &apds9999_attribute_group,	/* exposes custom attributes in sysfs */
-	.read_raw   = apds9999_read_raw,
-	.write_raw  = apds9999_write_raw,
-	.read_avail = apds9999_read_avail,			/* exposes _available sysfs files for enumerable settings */
+	.attrs              = &apds9999_attribute_group,	/* exposes custom attributes in sysfs */
+	.read_raw           = apds9999_read_raw,
+	.write_raw          = apds9999_write_raw,
+	.read_avail         = apds9999_read_avail,			/* exposes _available sysfs files for enumerable settings */
+	/* The following is for the event interface (interrupts) */
+	.read_event_config  = apds9999_read_event_config,
+	.write_event_config = apds9999_write_event_config,
+	.read_event_value   = apds9999_read_event_value,
+	.write_event_value  = apds9999_write_event_value,
 };
 
 // this function gets called during probe to initialize the chip
@@ -1579,6 +1886,8 @@ static int apds9999_probe(struct i2c_client *client){
 	data->client = client;
 	data->indio_dev = indio_dev;
 
+	mutex_init(&data->lock);
+
 	// Allocates one regmap_field per apds9999_reg_fields[] entry
 	// pointers are stored in data->regfield[]
 	ret = devm_regmap_field_bulk_alloc(&client->dev, data->regmap, data->regfield, apds9999_reg_fields, ARRAY_SIZE(apds9999_reg_fields));
@@ -1591,6 +1900,26 @@ static int apds9999_probe(struct i2c_client *client){
 	ret = apds9999_chip_init(data);
 	if (ret)
 		return ret;
+
+	/*
+	 * This registers the irq handlers, if there are any for the platform
+	 * the IRQF flags mean the following:
+	 *  IRQF_TRIGGER_LOW: level-triggered. fires as long as the line is low. Matches the datasheet
+	 *  IRQF_ONESHOT: this keeps the IRQ line masked until the soft-IRQ is handled to prevent spurious fires
+	 */
+	if (client->irq > 0) {
+		ret = devm_request_threaded_irq(&client->dev, client->irq,
+						apds9999_irq_handler,
+						apds9999_irq_thread,
+						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+						APDS9999_DRIVER_NAME, indio_dev);
+
+
+		if (ret) {
+			dev_err(&client->dev, "failed to request IRQ %d: %d\n", client->irq, ret);
+			return ret;
+		}
+	}
 
 	//TODO
 
