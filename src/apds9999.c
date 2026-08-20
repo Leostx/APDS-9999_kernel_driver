@@ -35,6 +35,7 @@
  *
  */
 
+#include "linux/iio/types.h"
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
@@ -602,7 +603,7 @@ static const struct iio_event_spec apds9999_ps_events[] = {
 	{
 	    /* This is for both events. Since we have single controll registers to enable and set the persistence. INT_CFG and INT_PST  */
 		.type          = IIO_EV_TYPE_THRESH,
-		.dir           = IIO_EV_DIR_EITHER,
+		.dir           = IIO_EV_DIR_NONE,
 		.mask_separate = BIT(IIO_EV_INFO_ENABLE) | BIT(IIO_EV_INFO_PERIOD),
 	},
 };
@@ -621,8 +622,13 @@ static const struct iio_event_spec apds9999_ls_events[] = {
 	},
 	{
 		.type          = IIO_EV_TYPE_THRESH,
-		.dir           = IIO_EV_DIR_EITHER,
+		.dir           = IIO_EV_DIR_NONE,
 		.mask_separate = BIT(IIO_EV_INFO_ENABLE) | BIT(IIO_EV_INFO_PERIOD),
+	},
+	{
+		.type          = IIO_EV_TYPE_CHANGE,
+		.dir           = IIO_EV_DIR_NONE,
+		.mask_separate = BIT(IIO_EV_INFO_VALUE) | BIT(IIO_EV_INFO_ENABLE),
 	},
 };
 
@@ -1006,7 +1012,7 @@ static int apds9999_read_avail(struct iio_dev *indio_dev, struct iio_chan_spec c
 
 /* ------------------- IIO EVENT CALLBACKS ------------------- */
 
-// This reads the controll registers for the events (interrupts). Sysfs: *_thresh_either_en
+// This reads the controll registers for the events (interrupts). Sysfs: *_thresh_en
 static int apds9999_read_event_config(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir){
 	struct apds9999_data *data = iio_priv(indio_dev);
 	unsigned int val;
@@ -1016,9 +1022,26 @@ static int apds9999_read_event_config(struct iio_dev *indio_dev, const struct ii
 	    case IIO_PROXIMITY:
 	    	ret = regmap_field_read(data->regfield[APDS9999_RF_INT_CFG_PS_INT_EN], &val);
 	    	break;
-	    case IIO_LIGHT:
-	    	ret = regmap_field_read(data->regfield[APDS9999_RF_INT_CFG_LS_INT_EN], &val);
-	    	break;
+		case IIO_LIGHT:
+		{
+			unsigned int reg_val;
+
+			ret = regmap_read(data->regmap, APDS9999_REG_INT_CFG, &reg_val);
+			if (ret)
+				break;
+
+			if (type == IIO_EV_TYPE_CHANGE)
+				// true if both LS_VAR_MODE and LS_INT_EN are set
+				// !! is for normalizing to 1/0
+				val = !!(reg_val & (APDS9999_INT_CFG_LS_INT_EN | APDS9999_INT_CFG_LS_VAR_MODE));
+
+			else
+				// true if LS_INT_EN is set and LS_VAR_MODE is clear
+				val = (reg_val & APDS9999_INT_CFG_LS_INT_EN) && !(reg_val & APDS9999_INT_CFG_LS_VAR_MODE);
+
+			break;
+		}
+
 	    default:
 	    	return -EINVAL;
 	}
@@ -1026,23 +1049,30 @@ static int apds9999_read_event_config(struct iio_dev *indio_dev, const struct ii
 	return ret ? ret : (int)val;
 }
 
-// This writes the controll registers for the events (interrupts). Sysfs: *_thresh_either_en
+// This writes the controll registers for the events (interrupts). Sysfs: *_thresh_en
 static int apds9999_write_event_config(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir, bool state){
 	struct apds9999_data *data = iio_priv(indio_dev);
 
+	// This is to say if the LS is in variance or threshold mode (0: threshold, 1: variance)
+	bool var_mode = (type == IIO_EV_TYPE_CHANGE);
+
 	switch (chan->type) {
     	case IIO_PROXIMITY:
-            // The double explamation mark is to normalize the integer value to 0 or 1
-    		return regmap_field_write(data->regfield[APDS9999_RF_INT_CFG_PS_INT_EN], !!state);
+    		return regmap_field_write(data->regfield[APDS9999_RF_INT_CFG_PS_INT_EN], state);
     	case IIO_LIGHT:
-    		return regmap_field_write(data->regfield[APDS9999_RF_INT_CFG_LS_INT_EN], !!state);
+            // here we set the variance mode and the enable bit in one go since they are both in the INT_CFG register
+            return regmap_update_bits(data->regmap, APDS9999_REG_INT_CFG,
+                     APDS9999_INT_CFG_LS_VAR_MODE | APDS9999_INT_CFG_LS_INT_EN,
+                     FIELD_PREP(APDS9999_INT_CFG_LS_VAR_MODE, var_mode) |
+                     FIELD_PREP(APDS9999_INT_CFG_LS_INT_EN, state));
     	default:
     		return -EINVAL;
 	}
 }
 
+
 // This reads the threshold value or persistence count. *_THRESH_UP or *_THRESH_LOW or INT_PST
-// Sysfs: *_thresh_{rising,falling}_value or *_thresh_either_period
+// Sysfs: *_thresh_{rising,falling}_value or *_thresh_period
 static int apds9999_read_event_value(struct iio_dev *indio_dev, const struct iio_chan_spec *chan, enum iio_event_type type, enum iio_event_direction dir, enum iio_event_info info, int *val, int *val2){
 	struct apds9999_data *data = iio_priv(indio_dev);
 
@@ -1098,21 +1128,37 @@ static int apds9999_read_event_value(struct iio_dev *indio_dev, const struct iio
     		return IIO_VAL_INT;
     	}
     	case IIO_LIGHT: {
+            // change event read from the LS_THRES_VAR register
+            if (type == IIO_EV_TYPE_CHANGE) {
+                // reads a single byte. Just three bits in reality
+                unsigned int reg_val;
+
+                ret = regmap_read(data->regmap, APDS9999_REG_LS_THRES_VAR, &reg_val);
+                if (ret)
+                    return ret;
+
+                // convert register value to count: 0 -> 8, 1 -> 16, 2 -> 32, ...
+                *val = 8 << reg_val;
+
+                return IIO_VAL_INT;
+            }
+
             // little-endian 32-bit buffer to save our three-byte register reads
             __le32 buf32;
-            // select the right register based on the event direction
-    		unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_LS_THRES_UP_0 : APDS9999_REG_LS_THRES_LOW_0;
+            // threshold events: select upper or lower threshold register based on direction
+            unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_LS_THRES_UP_0 : APDS9999_REG_LS_THRES_LOW_0;
 
-    		mutex_lock(&data->lock);
-    		ret = regmap_bulk_read(data->regmap, reg, &buf32, 3);
-    		mutex_unlock(&data->lock);
+            mutex_lock(&data->lock);
+            ret = regmap_bulk_read(data->regmap, reg, &buf32, 3);
+            mutex_unlock(&data->lock);
 
-    		if (ret)
-    			return ret;
+            if (ret)
+                return ret;
 
             // convert the final value to cpu endianness and save it in val
             *val = le32_to_cpu(buf32);
-    		return IIO_VAL_INT;
+
+            return IIO_VAL_INT;
     	}
     	default:
     		return -EINVAL;
@@ -1169,6 +1215,20 @@ static int apds9999_write_event_value(struct iio_dev *indio_dev, const struct ii
     		return ret;
     	}
     	case IIO_LIGHT: {
+            // change event read from the LS_THRES_VAR register
+            if (type == IIO_EV_TYPE_CHANGE) {
+                // val must be a power of two in [8, 1024] (register field is 3 bits: 0–7)
+                if (val < 8 || val > 1024 || !is_power_of_2(val))
+                    return -EINVAL;
+
+                // convert count to register value: 8 -> 0, 16 -> 1, 32 -> 2, ...
+                unsigned int reg_val = ilog2(val) - 3;
+
+                ret = regmap_write(data->regmap, APDS9999_REG_LS_THRES_VAR, reg_val);
+                return ret;
+            }
+
+            // threshold event write to the LS_THRES_UP/LOW registers
     		__le32 buf32;
 
     		unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_LS_THRES_UP_0 : APDS9999_REG_LS_THRES_LOW_0;
@@ -1232,7 +1292,8 @@ static irqreturn_t apds9999_irq_thread(int irq, void *p){
 
 	// check if LS interrupt status is set
 	if (status & APDS9999_STATUS_LS_INT) {
-        // we push the event with the dir either, since checking would require an additional read
+        // we push the event with the dir either and the type threshold, since checking would require an additional read
+        // TODO: do we want to do the additional reads?
 		iio_push_event(indio_dev,
 			       IIO_UNMOD_EVENT_CODE(IIO_LIGHT, 0, IIO_EV_TYPE_THRESH, IIO_EV_DIR_EITHER),
 			       timestamp);
