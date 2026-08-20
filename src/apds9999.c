@@ -17,13 +17,14 @@
  *
  * - [ ] power management basics: PS_EN / LS_EN / RGB_MODE now toggleable
  *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
- *       and regulator handling still missing
+ *       and regulator handling still missing: dev_pm_ops
  * - [ ] implement triggers
  * - [ ] active_scan_mask
  * - [ ] PS_DATA = PS_MEAS – PS_CAN
  * - [ ] thresholds
  * - [ ] what are events?
  * - [ ] create an available for the custom sysfs attributes
+ * - [ ] IR should be valid also without RGB mode
  * - [ ]
  * - [ ]
  * - [ ]
