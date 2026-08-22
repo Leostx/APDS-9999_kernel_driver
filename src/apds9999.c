@@ -20,7 +20,6 @@
  *       and regulator handling still missing: dev_pm_ops
  * - [ ] implement triggers
  * - [ ] active_scan_mask
- * - [ ] IR should be valid also without RGB mode
  * - [ ] mutex where?
  * - [ ] LS DATA STATUS
  * - [ ] test events
@@ -906,17 +905,19 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 					break;
 				}
 				case IIO_INTENSITY: {
-					// RGB channels are only valid when RGB mode is enabled
-					unsigned int rgb_mode;
+					// IR is always active. RGB channels are only valid when RGB mode is enabled
+					if (chan->channel2 != IIO_MOD_LIGHT_IR) {
+						unsigned int rgb_mode;
 
-					// read the rgb mode from the register
-					ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
-					if (ret)
-						return ret;
+						// read the rgb mode from the register
+						ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
+						if (ret)
+							return ret;
 
-					if (!rgb_mode){
-					    dev_err(&data->indio_dev->dev, "not in rgb mode: cannot read rgb channels.\n");
-						return -EBUSY;
+						if (!rgb_mode) {
+							dev_err(&data->indio_dev->dev, "not in rgb mode: cannot read rgb channels.\n");
+							return -EBUSY;
+						}
 					}
 
 					ret = apds9999_read_ls_raw(data, chan->address, val);
@@ -964,14 +965,19 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 					return apds9999_read_ls_processed(data, APDS9999_REG_LS_DATA_GREEN_0, val, val2);
 				}
 				case IIO_INTENSITY: {
-					// RGB channels require RGB mode
-					unsigned int rgb_mode;
-					ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
-					if (ret)
-						return ret;
-					if (!rgb_mode) {
-						dev_err(&data->indio_dev->dev, "not in rgb mode: cannot read rgb channels.\n");
-						return -EBUSY;
+					// IR is always active. RGB channels require RGB mode
+					if (chan->channel2 != IIO_MOD_LIGHT_IR) {
+						unsigned int rgb_mode;
+
+						// read the rgb mode from the register
+						ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
+						if (ret)
+							return ret;
+
+						if (!rgb_mode) {
+							dev_err(&data->indio_dev->dev, "not in rgb mode: cannot read rgb channels.\n");
+							return -EBUSY;
+						}
 					}
 
 					return apds9999_read_ls_processed(data, chan->address, val, val2);
