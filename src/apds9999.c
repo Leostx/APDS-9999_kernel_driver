@@ -585,6 +585,9 @@ static const int apds9999_ps_calibbias_range[] = { 0, 1, 2047 };
 // Range table for analog cancellation level PS_CAN_ANA. {min, step, max}
 static const int apds9999_ps_ana_can_range[] = { 0, 1, 31 };
 
+// Range table for PS pulse count PS_PULSES. {min, step, max}
+static const int apds9999_ps_pulses_range[] = { 0, 1, 255 };
+
 
 // This table is for converting the light sensor readings to mLux values - this comes from the datasheet
 // Resolution (mLux/count) indexed by [gain][resolution]
@@ -1697,6 +1700,10 @@ static ssize_t apds9999_ps_pulses_store(struct device *dev, struct device_attrib
 	return len;
 }
 
+static ssize_t apds9999_ps_pulses_available_show(struct device *dev, struct device_attribute *attr, char *buf){
+	return sysfs_emit(buf, "[%d %d %d]\n", apds9999_ps_pulses_range[0], apds9999_ps_pulses_range[1], apds9999_ps_pulses_range[2]);
+}
+
 /* -------------------------- END PS_PULSES ATTRIBUTE -------------------------- */
 
 /* -------------------------- PS_MEAS_RATE ATTRIBUTES -------------------------- */
@@ -2101,6 +2108,7 @@ static IIO_DEVICE_ATTR(ps_vcsel_curr_ma_available, 0444, apds9999_uint_avail_sho
 
 // PS_PULSES register: number of pulses per PS measurement
 static IIO_DEVICE_ATTR(ps_pulses, 0644, apds9999_ps_pulses_show, apds9999_ps_pulses_store, 0);
+static IIO_DEVICE_ATTR(ps_pulses_available, 0444, apds9999_ps_pulses_available_show, NULL, 0);
 
 // PS_CAN register: analog cancellation level
 static IIO_DEVICE_ATTR(ps_analog_cancellation, 0644, apds9999_ps_ana_can_show, apds9999_ps_ana_can_store, 0);
@@ -2133,6 +2141,7 @@ static struct attribute *apds9999_attributes[] = {
 	&iio_dev_attr_ps_vcsel_curr_ma_available.dev_attr.attr,
 	// PS_PULSES register
 	&iio_dev_attr_ps_pulses.dev_attr.attr,
+	&iio_dev_attr_ps_pulses_available.dev_attr.attr,
 	// PS_CAN register: analog cancellation
 	&iio_dev_attr_ps_analog_cancellation.dev_attr.attr,
 	&iio_dev_attr_ps_analog_cancellation_available.dev_attr.attr,
