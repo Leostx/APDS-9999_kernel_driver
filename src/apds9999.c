@@ -20,7 +20,6 @@
  *       and regulator handling still missing: dev_pm_ops
  * - [ ] implement triggers
  * - [ ] active_scan_mask
- * - [ ] PS_DATA = PS_MEAS – PS_CAN
  * - [ ] IR should be valid also without RGB mode
  * - [ ] mutex where?
  * - [ ] LS DATA STATUS
@@ -262,7 +261,13 @@
 #define APDS9999_FIELD_INT_PST_LS_PERS  REG_FIELD(APDS9999_REG_INT_PST, 4, 7)
 #define APDS9999_FIELD_INT_PST_PS_PERS  REG_FIELD(APDS9999_REG_INT_PST, 0, 3)
 
-// TODO thresholds etc
+// The following are the bits for the PS_CAN
+#define APDS9999_PS_CAN_DIG_HIGH    GENMASK(2, 0)  /* MSB of digital cancellation */
+#define APDS9999_PS_CAN_ANA         GENMASK(7, 3)  /* analog cancellation */
+
+#define APDS9999_FIELD_PS_CAN_DIG_HIGH  REG_FIELD(APDS9999_REG_PS_CAN_1, 0, 2)
+#define APDS9999_FIELD_PS_CAN_ANA       REG_FIELD(APDS9999_REG_PS_CAN_1, 3, 7)
+
 
 /* DEFINE DEFAULT VALUES - taken from the datasheet */
 // FIELD_PREP_CONST is used to fill just a subset of bits.
@@ -498,6 +503,8 @@ static const struct reg_field apds9999_reg_fields[] = {
 	APDS9999_FIELD_INT_CFG_PS_INT_EN,
 	APDS9999_FIELD_INT_PST_LS_PERS,
 	APDS9999_FIELD_INT_PST_PS_PERS,
+	APDS9999_FIELD_PS_CAN_DIG_HIGH,
+	APDS9999_FIELD_PS_CAN_ANA,
 };
 
 // this are the indices into apds9999_data.regfield[]
@@ -531,6 +538,8 @@ enum apds9999_rf {
 	APDS9999_RF_INT_CFG_PS_INT_EN,
 	APDS9999_RF_INT_PST_LS_PERS,
 	APDS9999_RF_INT_PST_PS_PERS,
+	APDS9999_RF_PS_CAN_DIG_HIGH,
+	APDS9999_RF_PS_CAN_ANA,
 	APDS9999_RF_COUNT,
 };
 
@@ -564,6 +573,12 @@ static const unsigned int apds9999_ls_rate_lut[] = { 25, 50, 100, 200, 500, 1000
 // bits 0b101 through 0b111 are reserved and not present in the table
 // type is int so that read_avail can hand the pointer directly to the IIO core
 static const int apds9999_ls_gain_lut[] = { 1, 3, 6, 9, 18 }; /* x */
+
+// Range table for digital cancellation level PS_CAN. {min, step, max}
+static const int apds9999_ps_calibbias_range[] = { 0, 1, 2047 };
+
+// Range table for analog cancellation level PS_CAN_ANA. {min, step, max}
+static const int apds9999_ps_ana_can_range[] = { 0, 1, 31 };
 
 
 // This table is for converting the light sensor readings to mLux values - this comes from the datasheet
@@ -700,7 +715,8 @@ static const struct iio_chan_spec apds9999_channels[] = {
 			.shift          = 0,
 			.endianness     = APDS9999_CH_ENDIANNESS,	/* This refers to the buffer used by the driver */
 		},
-		.info_mask_separate  = BIT(IIO_CHAN_INFO_RAW),
+		.info_mask_separate           = BIT(IIO_CHAN_INFO_RAW) | BIT(IIO_CHAN_INFO_CALIBBIAS),
+		.info_mask_separate_available = BIT(IIO_CHAN_INFO_CALIBBIAS),
 		.event_spec          = apds9999_ps_events,
 		.num_event_specs     = ARRAY_SIZE(apds9999_ps_events),
 	},
@@ -902,6 +918,24 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 					ret = -EINVAL;
 			}
 			break;
+		case IIO_CHAN_INFO_CALIBBIAS: {
+			__le16 buf16;
+
+			if (chan->type != IIO_PROXIMITY)
+				return -EINVAL;
+
+			mutex_lock(&data->lock);
+			ret = regmap_bulk_read(data->regmap, APDS9999_REG_PS_CAN_0, &buf16, 2);
+			mutex_unlock(&data->lock);
+
+			if (ret)
+				return ret;
+
+			// Mask out the 5 MSBs since they are the analog cancellation level. Keep the lower 11
+			*val = le16_to_cpu(buf16) & (APDS9999_PS_CAN_DIG_HIGH | 0xFF);
+
+			return IIO_VAL_INT;
+		}
 		case IIO_CHAN_INFO_PROCESSED:
 			switch (chan->type) {
 				// IIO_LIGHT is the illuminance (ALS) channel
@@ -1035,6 +1069,45 @@ static int apds9999_write_raw(struct iio_dev *indio_dev, struct iio_chan_spec co
 			}
 			break;
 		}
+		case IIO_CHAN_INFO_CALIBBIAS: {
+			// This is the digital can level we are going to set
+			u8 buf[2];
+			// This is the value of the MSB register
+			unsigned int can1;
+
+			if (chan->type != IIO_PROXIMITY)
+				return -EINVAL;
+
+			// 11-bit digital cancellation level
+			if (val < 0 || val > 2047)
+				return -EINVAL;
+
+			mutex_lock(&data->lock);
+
+			// This reads the MSB register wich containts the higher digi can levels as well as the ana can
+			ret = regmap_read(data->regmap, APDS9999_REG_PS_CAN_1, &can1);
+			if (ret) {
+				mutex_unlock(&data->lock);
+				return ret;
+			}
+
+			// write the LSB byte which is digi can level for sure
+			buf[0] = val & 0xFF;
+			// write the ana can bits we read earlier, and the higher digican bits
+			// we mask out all bits that are not ps_can_ana in the MSByte and concatenate it with
+			// the shift of the value we want to write, to consider only the MSByte and then we mask out everything that is not ps_can_dig_high
+			buf[1] = (can1 & APDS9999_PS_CAN_ANA) | ((val >> 8) & APDS9999_PS_CAN_DIG_HIGH);
+
+			// now we bulk write the two bytes
+			ret = regmap_bulk_write(data->regmap, APDS9999_REG_PS_CAN_0, buf, 2);
+
+			mutex_unlock(&data->lock);
+
+			if (ret)
+				return ret;
+
+			break;
+		}
 		default:
 			ret = -EINVAL;
 	}
@@ -1052,6 +1125,14 @@ static int apds9999_read_avail(struct iio_dev *indio_dev, struct iio_chan_spec c
 			*type   = IIO_VAL_INT;
 			*length = ARRAY_SIZE(apds9999_ls_gain_lut);
 			return IIO_AVAIL_LIST;
+		case IIO_CHAN_INFO_CALIBBIAS:
+			// expose the 11-bit digital cancellation range [0, 1, 2047] for in_proximity_calibbias
+			if (chan->type != IIO_PROXIMITY)
+				return -EINVAL;
+			*vals   = apds9999_ps_calibbias_range;
+			*type   = IIO_VAL_INT;
+			*length = ARRAY_SIZE(apds9999_ps_calibbias_range);
+			return IIO_AVAIL_RANGE;
 		default:
 			return -EINVAL;
 	}
@@ -1954,6 +2035,50 @@ static const struct attribute_group apds9999_event_attribute_group = {
 };
 
 
+/* -------------------------- PS_CAN_ANA ATTRIBUTES -------------------------- */
+
+static ssize_t apds9999_ps_ana_can_show(struct device *dev, struct device_attribute *attr, char *buf){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_CAN_ANA], &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", val);
+}
+
+static ssize_t apds9999_ps_ana_can_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	// 5-bit: 0-31
+	if (val < 0 || val > 31)
+		return -EINVAL;
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_PS_CAN_ANA], val);
+	if (ret)
+		return ret;
+
+	return len;
+}
+
+static ssize_t apds9999_ps_ana_can_available_show(struct device *dev, struct device_attribute *attr, char *buf){
+	return sysfs_emit(buf, "[%d %d %d]\n", apds9999_ps_ana_can_range[0], apds9999_ps_ana_can_range[1], apds9999_ps_ana_can_range[2]);
+}
+
+/* -------------------------- END PS_CAN_ANA ATTRIBUTES -------------------------- */
+
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -1971,6 +2096,10 @@ static IIO_DEVICE_ATTR(ps_vcsel_curr_ma_available, 0444, apds9999_uint_avail_sho
 
 // PS_PULSES register: number of pulses per PS measurement
 static IIO_DEVICE_ATTR(ps_pulses, 0644, apds9999_ps_pulses_show, apds9999_ps_pulses_store, 0);
+
+// PS_CAN register: analog cancellation level
+static IIO_DEVICE_ATTR(ps_analog_cancellation, 0644, apds9999_ps_ana_can_show, apds9999_ps_ana_can_store, 0);
+static IIO_DEVICE_ATTR(ps_analog_cancellation_available, 0444, apds9999_ps_ana_can_available_show, NULL, 0);
 
 // PS_MEAS_RATE register: PS resolution and measurement rate
 static IIO_DEVICE_ATTR(ps_reso_bit, 0644, apds9999_ps_reso_show, apds9999_ps_reso_store, 0);
@@ -1999,6 +2128,9 @@ static struct attribute *apds9999_attributes[] = {
 	&iio_dev_attr_ps_vcsel_curr_ma_available.dev_attr.attr,
 	// PS_PULSES register
 	&iio_dev_attr_ps_pulses.dev_attr.attr,
+	// PS_CAN register: analog cancellation
+	&iio_dev_attr_ps_analog_cancellation.dev_attr.attr,
+	&iio_dev_attr_ps_analog_cancellation_available.dev_attr.attr,
 	// PS_MEAS_RATE register
 	&iio_dev_attr_ps_reso_bit.dev_attr.attr,
 	&iio_dev_attr_ps_reso_bit_available.dev_attr.attr,
