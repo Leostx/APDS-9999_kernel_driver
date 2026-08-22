@@ -18,7 +18,6 @@
  * - [ ] power management basics: PS_EN / LS_EN / RGB_MODE now toggleable
  *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
  *       and regulator handling still missing: dev_pm_ops
- * - [ ] mutex where?
  * - [ ] LS DATA STATUS
  * - [ ] test events
  * - [ ] make read only attributes read only also in sysfs:
@@ -956,10 +955,7 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 			if (chan->type != IIO_PROXIMITY)
 				return -EINVAL;
 
-			mutex_lock(&data->lock);
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_PS_CAN_0, &buf16, 2);
-			mutex_unlock(&data->lock);
-
 			if (ret)
 				return ret;
 
@@ -1278,10 +1274,7 @@ static int apds9999_read_event_value(struct iio_dev *indio_dev, const struct iio
             // select the right register based on the event direction
     		unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_PS_THRES_UP_0 : APDS9999_REG_PS_THRES_LOW_0;
 
-            // Here we lock the mutex, such that the register read is atomic, since it is not provided by the hardware
-    		mutex_lock(&data->lock);
     		ret = regmap_bulk_read(data->regmap, reg, &buf16, 2);
-    		mutex_unlock(&data->lock);
 
     		if (ret)
     			return ret;
@@ -1313,9 +1306,7 @@ static int apds9999_read_event_value(struct iio_dev *indio_dev, const struct iio
             // threshold events: select upper or lower threshold register based on direction
             unsigned int reg = (dir == IIO_EV_DIR_RISING) ? APDS9999_REG_LS_THRES_UP_0 : APDS9999_REG_LS_THRES_LOW_0;
 
-            mutex_lock(&data->lock);
             ret = regmap_bulk_read(data->regmap, reg, &buf32, 3);
-            mutex_unlock(&data->lock);
 
             if (ret)
                 return ret;
@@ -1373,9 +1364,7 @@ static int apds9999_write_event_value(struct iio_dev *indio_dev, const struct ii
 
     		buf16 = cpu_to_le16((u16)val);
 
-    		mutex_lock(&data->lock);
     		ret = regmap_bulk_write(data->regmap, reg, &buf16, 2);
-    		mutex_unlock(&data->lock);
 
     		return ret;
     	}
@@ -1404,9 +1393,7 @@ static int apds9999_write_event_value(struct iio_dev *indio_dev, const struct ii
 
             buf32 = cpu_to_le32((u32)val);
 
-    		mutex_lock(&data->lock);
     		ret = regmap_bulk_write(data->regmap, reg, &buf32, 3);
-    		mutex_unlock(&data->lock);
 
     		return ret;
     	}
