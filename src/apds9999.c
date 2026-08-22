@@ -18,17 +18,20 @@
  * - [ ] power management basics: PS_EN / LS_EN / RGB_MODE now toggleable
  *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
  *       and regulator handling still missing: dev_pm_ops
- * - [ ] LS DATA STATUS
  * - [ ] test events
+ * - [ ] test triggered buffers
+ * - [ ] *_available attributes for events
+ *
  * - [ ] make read only attributes read only also in sysfs:
  * 	        The standard iio core way is to expose the same permissions for all attributes.
  *          In our case we return just an EINVAL error when writing to read-only attributes.
  *          This could be mitigated by moving the info_mask to an ext_info.
  *          For simplicity we keep it as is for now.
- * - [ ] *_available attributes for events
- * - [ ]
- * - [ ]
- * - [ ]
+ *
+ * - [ ] use the fields LS/PS_DATA_STATUS from the MAIN_STATUS register:
+ *          These are the only bits that the sensor has but the driver does not used
+ *          Since the Interrupt lines are threshold based and not data-ready, it doesn't
+ *          seem to make sense to use them.
  *
  */
 
@@ -825,8 +828,6 @@ static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address
 static int apds9999_read_ls_raw(struct apds9999_data *data, unsigned int address, int *val){
 	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
 	int ret = -EINVAL;
-
-	// TODO check if this works also on lower resolution settings or if we get spurios MSBs
 
 	// little endian 32-bit value is to buffer our 3-register read
 	// we have to initialize it to 0 to avoid garbage values
