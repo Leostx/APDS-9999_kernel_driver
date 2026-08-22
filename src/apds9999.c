@@ -24,6 +24,11 @@
  * - [ ] mutex where?
  * - [ ] LS DATA STATUS
  * - [ ] test events
+ * - [ ] make read only attributes read only also in sysfs:
+ * 	        The standard iio core way is to expose the same permissions for all attributes.
+ *          In our case we return just an EINVAL error when writing to read-only attributes.
+ *          This could be mitigated by moving the info_mask to an ext_info.
+ *          For simplicity we keep it as is for now.
  * - [ ]
  * - [ ]
  * - [ ]
