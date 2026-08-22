@@ -18,8 +18,6 @@
  * - [ ] power management basics: PS_EN / LS_EN / RGB_MODE now toggleable
  *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
  *       and regulator handling still missing: dev_pm_ops
- * - [ ] implement triggers
- * - [ ] active_scan_mask
  * - [ ] mutex where?
  * - [ ] LS DATA STATUS
  * - [ ] test events
@@ -35,7 +33,6 @@
  *
  */
 
-#include "linux/iio/types.h"
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
@@ -51,6 +48,10 @@
 #include <linux/sysfs.h>         // sysfs_emit formats sysfs reads for custom attributes
 #include <linux/interrupt.h>     // request_threaded_irq, IRQ_WAKE_THREAD, IRQF_TRIGGER_LOW
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
+// the following are for the triggered buffer
+#include <linux/iio/buffer.h>
+#include <linux/iio/triggered_buffer.h>
+#include <linux/iio/trigger_consumer.h>
 
 // Driver Name - done as define, since we use it multiple times
 #define APDS9999_DRIVER_NAME 	"apds9999"
@@ -718,8 +719,8 @@ static const struct iio_chan_spec apds9999_channels[] = {
 		.scan_index     = 0,							/* This defines the order in which channels are placed inside the buffer */
 		.scan_type      = {
 			.sign           = 'u',
-			.realbits       = 11,						/* TODO should we modify this based on the value set in PS_MEAS_RATE? */
-			.storagebits    = 16,
+			.realbits       = 11,						/* maximum resolution of the sensor */
+			.storagebits    = 32,                       /* we use u32 to have a predictable padding when filling the buffer */
 			.shift          = 0,
 			.endianness     = APDS9999_CH_ENDIANNESS,	/* This refers to the buffer used by the driver */
 		},
@@ -749,6 +750,16 @@ static const struct iio_chan_spec apds9999_channels[] = {
 
 };
 
+// The following are the available scan masks based on what is enabled. The bits reflect the scan_index set earlier
+static const unsigned long apds9999_available_scan_masks[] = {
+	BIT(0),							// PS only
+	BIT(5) | BIT(4),				// LS in ALS mode (ALS + IR)
+	BIT(5) | BIT(4) | BIT(0),		// PS + LS in ALS mode
+	GENMASK(4, 1),					// LS in RGB mode (RGB + IR)
+	GENMASK(4, 0),					// PS + LS in RGB mode
+	0,							    // terminator
+};
+
 // This is the type of struct that will eventually hold the data that our driver needs to function
 struct apds9999_data {
 	struct i2c_client *client;
@@ -758,6 +769,17 @@ struct apds9999_data {
 	struct regmap_field *regfield[APDS9999_RF_COUNT];
 
 	struct mutex lock;
+
+	// this buffer holds the data for the triggered buffer. It should be alligned correctly
+	struct {
+		u32 ps;
+		u32 red;
+		u32 green;
+		u32 blue;
+		u32 ir;
+		u32 als;
+		s64 timestamp;
+	} scan_buf;
 };
 
 // this function reads the raw value from the proximity sensor into val
@@ -1444,6 +1466,127 @@ static irqreturn_t apds9999_irq_thread(int irq, void *p){
 			       IIO_UNMOD_EVENT_CODE(IIO_LIGHT, 0, IIO_EV_TYPE_THRESH, IIO_EV_DIR_EITHER),
 			       timestamp);
 	}
+
+	return IRQ_HANDLED;
+}
+
+/* ------------------- TRIGGERED BUFFER SETUP ------------------- */
+
+// this is called when userspace enables the buffer. It checks that the mode is acutally correct
+static int apds9999_buffer_preenable(struct iio_dev *indio_dev){
+	struct apds9999_data *data = iio_priv(indio_dev);
+	const unsigned long *mask = indio_dev->active_scan_mask;
+
+	unsigned int rgb_mode;
+	int ret;
+
+	// get rgb mode
+	ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
+	if (ret)
+		return ret;
+
+	bool wants_als = test_bit(5, mask);
+	bool wants_rgb = test_bit(1, mask) || test_bit(2, mask) || test_bit(3, mask);
+
+	// check that the scan mask is compatible with the current mode
+	if (wants_als && rgb_mode) {
+		dev_err(&indio_dev->dev, "scan mask requests ALS channel but sensor is in RGB mode.\n");
+		return -EINVAL;
+	}
+
+	if (wants_rgb && !rgb_mode) {
+		dev_err(&indio_dev->dev, "scan mask requests RGB channels but sensor is in ALS mode.\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static const struct iio_buffer_setup_ops apds9999_buffer_setup_ops = {
+	.preenable = apds9999_buffer_preenable,
+};
+
+/* ------------------- TRIGGERED BUFFER HANDLER ------------------- */
+
+// This function is called when an external trigger fires
+static irqreturn_t apds9999_trigger_handler(int irq, void *p){
+	struct iio_dev *indio_dev = pf->indio_dev;
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	struct iio_poll_func *pf = p;
+	const unsigned long *mask = indio_dev->active_scan_mask;
+
+	int ret;
+
+	mutex_lock(&data->lock);
+
+	// Read PS if enabled (scan_index 0)
+	if (test_bit(0, mask)) {
+    	ret = apds9999_read_ps_raw(data, APDS9999_REG_PS_DATA_0, (int *)&data->scan_buf.ps);
+    	if (ret < 0)
+    		goto err_unlock;
+	}
+
+
+
+	// bit 4 is the ir channel. If the LS is enabled this bit has to be set
+	if (test_bit(4, mask)) {
+		bool rgb_chan = test_bit(1, mask) || test_bit(2, mask) || test_bit(3, mask);
+
+		// check for rgb mode
+		if (rgb_chan) {
+		    // read 3 bytes for each of the 4 channels (IR, GREEN, BLUE, RED)
+			u8 ls_raw[12];
+
+			ret = regmap_bulk_read(data->regmap, APDS9999_REG_LS_DATA_IR_0,ls_raw, sizeof(ls_raw));
+			if (ret)
+				goto err_unlock;
+
+			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
+			// the ordering is based on the sensors register order
+			// IR channel
+			if (test_bit(4, mask))
+				data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
+			// GREEN channel
+			if (test_bit(2, mask))
+				data->scan_buf.green = get_unaligned_le24(&ls_raw[3]);
+			// BLUE channel
+			if (test_bit(3, mask))
+				data->scan_buf.blue = get_unaligned_le24(&ls_raw[6]);
+			// RED channel
+			if (test_bit(1, mask))
+				data->scan_buf.red = get_unaligned_le24(&ls_raw[9]);
+		} else {
+			// read 3 bytes for IR and 3 bytes for ALS
+			u8 ls_raw[6];
+
+			ret = regmap_bulk_read(data->regmap, APDS9999_REG_LS_DATA_IR_0, ls_raw, sizeof(ls_raw));
+			if (ret)
+				goto err_unlock;
+
+			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
+			// the ordering is based on the sensors register order
+			// IR channel
+			if (test_bit(4, mask))
+				data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
+			// ALS/Green channel
+			if (test_bit(5, mask))
+				data->scan_buf.als = get_unaligned_le24(&ls_raw[3]);
+		}
+
+	}
+
+	mutex_unlock(&data->lock);
+
+	iio_push_to_buffers_with_timestamp(indio_dev, &data->scan_buf, iio_get_time_ns(indio_dev));
+	iio_trigger_notify_done(indio_dev->trig);
+
+	return IRQ_HANDLED;
+
+err_unlock:
+	mutex_unlock(&data->lock);
+	iio_trigger_notify_done(indio_dev->trig);
+	dev_err(&indio_dev->dev, "reading ps failed: %d.\n", ret);
 
 	return IRQ_HANDLED;
 }
@@ -2262,11 +2405,9 @@ static int apds9999_probe(struct i2c_client *client){
 	indio_dev->info = &apds9999_info;			// hook to the functions to interact with the device
 	indio_dev->channels = apds9999_channels;	// the different channels of the device
 	indio_dev->num_channels = ARRAY_SIZE(apds9999_channels);
-	// These are all the operating modes the device supports
-	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_SOFTWARE | INDIO_EVENT_TRIGGERED; // TODO check if this is actually right
-	// TODO do we need available_scan_masks ?
-
-	// TODO do we have to setup the kernel fifo buffer - devm_iio_kfifo_buffer_setup ?
+	// These are all the operating modes the device supports. The events are triggered by the hardware, the mode gets set up by the through the irq setup
+	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
+	indio_dev->available_scan_masks = apds9999_available_scan_masks;
 
 	// retrive the pointer to the area that got allocated at the end of the iio_dev struct by devm_iio_device_alloc
 	data = iio_priv(indio_dev);
@@ -2321,7 +2462,11 @@ static int apds9999_probe(struct i2c_client *client){
 		}
 	}
 
-	//TODO
+	// Set up the kfifo buffer + trigger pollfunc for software-triggered sampling
+	ret = devm_iio_triggered_buffer_setup(&client->dev, indio_dev, NULL, apds9999_trigger_handler, &apds9999_buffer_setup_ops);
+	if (ret)
+		return ret;
+
 
 	// register the driver for this iio device, return if it fails
 	ret = devm_iio_device_register(&client->dev, indio_dev);
