@@ -18,6 +18,7 @@
  * - [ ] power management basics: PS_EN / LS_EN / RGB_MODE now toggleable
  *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
  *       and regulator handling still missing: dev_pm_ops
+ *
  * - [ ] test events
  * - [ ] test triggered buffers
  * - [ ] *_available attributes for events
@@ -31,7 +32,7 @@
  * - [ ] use the fields LS/PS_DATA_STATUS from the MAIN_STATUS register:
  *          These are the only bits that the sensor has but the driver does not used
  *          Since the Interrupt lines are threshold based and not data-ready, it doesn't
- *          seem to make sense to use them.
+ *          seem to make sense to use these fields.
  *
  */
 
@@ -53,9 +54,11 @@
 #include <linux/interrupt.h>     // request_threaded_irq, IRQ_WAKE_THREAD, IRQF_TRIGGER_LOW
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
 // the following are for the triggered buffer
+#ifdef APDS9999_BUFFER
 #include <linux/iio/buffer.h>
 #include <linux/iio/triggered_buffer.h>
 #include <linux/iio/trigger_consumer.h>
+#endif
 
 // Driver Name - done as define, since we use it multiple times
 #define APDS9999_DRIVER_NAME 	"apds9999"
@@ -754,6 +757,7 @@ static const struct iio_chan_spec apds9999_channels[] = {
 
 };
 
+#ifdef APDS9999_BUFFER
 // The following are the available scan masks based on what is enabled. The bits reflect the scan_index set earlier
 static const unsigned long apds9999_available_scan_masks[] = {
 	BIT(0),							// PS only
@@ -763,6 +767,7 @@ static const unsigned long apds9999_available_scan_masks[] = {
 	GENMASK(4, 0),					// PS + LS in RGB mode
 	0,							    // terminator
 };
+#endif
 
 // This is the type of struct that will eventually hold the data that our driver needs to function
 struct apds9999_data {
@@ -774,6 +779,7 @@ struct apds9999_data {
 
 	struct mutex lock;
 
+#ifdef APDS9999_BUFFER
 	// this buffer holds the data for the triggered buffer. It should be alligned correctly
 	struct {
 		u32 ps;
@@ -784,6 +790,7 @@ struct apds9999_data {
 		u32 als;
 		s64 timestamp;
 	} scan_buf;
+#endif
 };
 
 // this function reads the raw value from the proximity sensor into val
@@ -1461,6 +1468,7 @@ static irqreturn_t apds9999_irq_thread(int irq, void *p){
 }
 
 /* ------------------- TRIGGERED BUFFER SETUP ------------------- */
+#ifdef APDS9999_BUFFER
 
 // this is called when userspace enables the buffer. It checks that the mode is acutally correct
 static int apds9999_buffer_preenable(struct iio_dev *indio_dev){
@@ -1579,6 +1587,7 @@ err_unlock:
 
 	return IRQ_HANDLED;
 }
+#endif /* APDS9999_BUFFER */
 
 /* ------------------- END INTERRUPT HANDLERS ------------------- */
 
@@ -2395,8 +2404,12 @@ static int apds9999_probe(struct i2c_client *client){
 	indio_dev->channels = apds9999_channels;	// the different channels of the device
 	indio_dev->num_channels = ARRAY_SIZE(apds9999_channels);
 	// These are all the operating modes the device supports. The events are triggered by the hardware, the mode gets set up by the through the irq setup
-	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
+	indio_dev->modes = INDIO_DIRECT_MODE;
+
+#ifdef APDS9999_BUFFER
+	indio_dev->modes |= INDIO_BUFFER_TRIGGERED;
 	indio_dev->available_scan_masks = apds9999_available_scan_masks;
+#endif
 
 	// retrive the pointer to the area that got allocated at the end of the iio_dev struct by devm_iio_device_alloc
 	data = iio_priv(indio_dev);
@@ -2451,10 +2464,12 @@ static int apds9999_probe(struct i2c_client *client){
 		}
 	}
 
+#ifdef APDS9999_BUFFER
 	// Set up the kfifo buffer + trigger pollfunc for software-triggered sampling
 	ret = devm_iio_triggered_buffer_setup(&client->dev, indio_dev, NULL, apds9999_trigger_handler, &apds9999_buffer_setup_ops);
 	if (ret)
 		return ret;
+#endif
 
 
 	// register the driver for this iio device, return if it fails
