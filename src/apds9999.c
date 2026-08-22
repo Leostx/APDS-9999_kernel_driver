@@ -28,7 +28,7 @@
  *          In our case we return just an EINVAL error when writing to read-only attributes.
  *          This could be mitigated by moving the info_mask to an ext_info.
  *          For simplicity we keep it as is for now.
- * - [ ]
+ * - [ ] *_available attributes for events
  * - [ ]
  * - [ ]
  * - [ ]
@@ -219,6 +219,7 @@
 #define APDS9999_STATUS_POS         BIT(5)	/* Power On Status*/
 #define APDS9999_STATUS_LS_INT      BIT(4)	/* interrupt occured for ls*/
 #define APDS9999_STATUS_LS_DATA 	BIT(3)	/* new ls data is ready*/
+#define APDS9999_STATUS_PS_LOGIC    BIT(2)  /* 1=object is close, 0=object is far */
 #define APDS9999_STATUS_PS_INT      BIT(1)	/* interrupt occured for ps*/
 #define APDS9999_STATUS_PS_DATA 	BIT(0)	/* new ps data is ready*/
 
@@ -1426,9 +1427,12 @@ static irqreturn_t apds9999_irq_thread(int irq, void *p){
 
 	// check if PS interrupt status is set
 	if (status & APDS9999_STATUS_PS_INT) {
+		// we check the PS_LOGIC_SIGNAL_STATUS bit to determine the direction
+	    enum iio_event_direction dir = (status & APDS9999_STATUS_PS_LOGIC) ? IIO_EV_DIR_RISING : IIO_EV_DIR_FALLING;
+
 	    // we push the event with the dir either, since checking would require an additional read
 		iio_push_event(indio_dev,
-			       IIO_UNMOD_EVENT_CODE(IIO_PROXIMITY, 0, IIO_EV_TYPE_THRESH, IIO_EV_DIR_EITHER),
+			       IIO_UNMOD_EVENT_CODE(IIO_PROXIMITY, 0, IIO_EV_TYPE_THRESH, dir),
 			       timestamp);
 	}
 
