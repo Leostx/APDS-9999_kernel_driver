@@ -48,6 +48,8 @@
 #include <linux/iio/sysfs.h>    // IIO_DEVICE_ATTR for the custom sysfs attributes
 #include <linux/kstrtox.h>       // kstrtobool parses sysfs user input to boolean
 #include <linux/sysfs.h>         // sysfs_emit formats sysfs reads for custom attributes
+#include <linux/log2.h>          // is_power_of_2, ilog2
+#include <linux/unaligned.h>     // get_unaligned_le24
 #include <linux/interrupt.h>     // request_threaded_irq, IRQ_WAKE_THREAD, IRQF_TRIGGER_LOW
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
 // the following are for the triggered buffer
@@ -1195,7 +1197,7 @@ static int apds9999_read_event_config(struct iio_dev *indio_dev, const struct ii
 			if (type == IIO_EV_TYPE_CHANGE)
 				// true if both LS_VAR_MODE and LS_INT_EN are set
 				// !! is for normalizing to 1/0
-				val = !!(reg_val & (APDS9999_INT_CFG_LS_INT_EN | APDS9999_INT_CFG_LS_VAR_MODE));
+				val = !!(reg_val & APDS9999_INT_CFG_LS_INT_EN) && !!(reg_val & APDS9999_INT_CFG_LS_VAR_MODE);
 
 			else
 				// true if LS_INT_EN is set and LS_VAR_MODE is clear
@@ -1498,10 +1500,9 @@ static const struct iio_buffer_setup_ops apds9999_buffer_setup_ops = {
 
 // This function is called when an external trigger fires
 static irqreturn_t apds9999_trigger_handler(int irq, void *p){
+	struct iio_poll_func *pf = p;
 	struct iio_dev *indio_dev = pf->indio_dev;
 	struct apds9999_data *data = iio_priv(indio_dev);
-
-	struct iio_poll_func *pf = p;
 	const unsigned long *mask = indio_dev->active_scan_mask;
 
 	int ret;
