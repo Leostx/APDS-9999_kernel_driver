@@ -1509,8 +1509,51 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 	// clear the buffer, so no stale data is pushed to userspace
 	memset(&data->scan_buf, 0, sizeof(data->scan_buf));
 
-	// Read PS if enabled (scan_index 0)
-	if (test_bit(0, mask)) {
+	if (test_bit(0, mask) && test_bit(4, mask)) {
+		// PS + LS both active: single bulk read from PS_DATA_0 covering both sensors
+
+		bool rgb_chan = test_bit(1, mask) || test_bit(2, mask) || test_bit(3, mask);
+
+		if (rgb_chan) {
+			// PS(2) + IR(3) + GREEN(3) + BLUE(3) + RED(3) = 14 bytes
+			u8 raw[14];
+
+			ret = regmap_bulk_read(data->regmap, APDS9999_REG_PS_DATA_0, raw, sizeof(raw));
+			if (ret)
+				goto err_unlock;
+
+			// PS channel, the masks removes the overflow bits
+			data->scan_buf.ps = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
+
+			// IR channel - active for sure
+			data->scan_buf.ir = get_unaligned_le24(&raw[2]);
+			// GREEN channel
+			if (test_bit(2, mask))
+				data->scan_buf.green = get_unaligned_le24(&raw[5]);
+			// BLUE channel
+			if (test_bit(3, mask))
+				data->scan_buf.blue = get_unaligned_le24(&raw[8]);
+			// RED channel
+			if (test_bit(1, mask))
+				data->scan_buf.red = get_unaligned_le24(&raw[11]);
+		} else {
+			// PS(2) + IR(3) + GREEN/ALS(3) = 8 bytes
+			u8 raw[8];
+
+			ret = regmap_bulk_read(data->regmap, APDS9999_REG_PS_DATA_0, raw, sizeof(raw));
+			if (ret)
+				goto err_unlock;
+
+			data->scan_buf.ps = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
+			// IR channel - active for sure
+			data->scan_buf.ir = get_unaligned_le24(&raw[2]);
+			// ALS/Green channel
+			if (test_bit(5, mask))
+				data->scan_buf.als = get_unaligned_le24(&raw[5]);
+		}
+
+	} else if (test_bit(0, mask)) {
+		// PS only
 		int ps_val;
 
 		ret = apds9999_read_ps_raw(data, APDS9999_REG_PS_DATA_0, &ps_val);
@@ -1518,20 +1561,17 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 			goto err_unlock;
 
 		data->scan_buf.ps = (u32)ps_val;
-	}
 
-
-
-	// bit 4 is the ir channel. If the LS is enabled this bit has to be set
-	if (test_bit(4, mask)) {
+	} else if (test_bit(4, mask)) {
+		// LS only
 		bool rgb_chan = test_bit(1, mask) || test_bit(2, mask) || test_bit(3, mask);
 
 		// check for rgb mode
 		if (rgb_chan) {
-		    // read 3 bytes for each of the 4 channels (IR, GREEN, BLUE, RED)
+			// read 3 bytes for each of the 4 channels (IR, GREEN, BLUE, RED)
 			u8 ls_raw[12];
 
-			ret = regmap_bulk_read(data->regmap, APDS9999_REG_LS_DATA_IR_0,ls_raw, sizeof(ls_raw));
+			ret = regmap_bulk_read(data->regmap, APDS9999_REG_LS_DATA_IR_0, ls_raw, sizeof(ls_raw));
 			if (ret)
 				goto err_unlock;
 
@@ -1564,7 +1604,6 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 			if (test_bit(5, mask))
 				data->scan_buf.als = get_unaligned_le24(&ls_raw[3]);
 		}
-
 	}
 
 	mutex_unlock(&data->lock);
