@@ -50,6 +50,7 @@
 #include <linux/kstrtox.h>       // kstrtobool parses sysfs user input to boolean
 #include <linux/sysfs.h>         // sysfs_emit formats sysfs reads for custom attributes
 #include <linux/log2.h>          // is_power_of_2, ilog2
+#include <linux/string.h>        // memset
 #include <linux/unaligned.h>     // get_unaligned_le24
 #include <linux/interrupt.h>     // request_threaded_irq, IRQ_WAKE_THREAD, IRQF_TRIGGER_LOW
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
@@ -816,13 +817,8 @@ static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address
         // get the full 16 bit value from the regmap bulk read result and convert it to cpu endianness
 		unsigned int raw = le16_to_cpu(regs);
 
-		// check if the measurement has overflown, by masking out the overflow bit
-		// we have to shift by 8 since we are using the full 16 bits
-		// return -1 if yes, otherwise return the reading since all more significant bits are 0
-		if (raw & (APDS9999_REG_PS_DATA_1_OVRFLW << 8))
-			*val = -1;
-		else
-			*val = raw;
+		// mask the actual value to 11 bits. The overflow bit can be checked via ps_overflow sysfs attribute
+		*val = raw & GENMASK(10, 0);
 	}
 
 	// if ret is 0, everything went fine. Inform the caller that we read an int
@@ -1517,11 +1513,18 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 
 	mutex_lock(&data->lock);
 
+	// clear the buffer, so no stale data is pushed to userspace
+	memset(&data->scan_buf, 0, sizeof(data->scan_buf));
+
 	// Read PS if enabled (scan_index 0)
 	if (test_bit(0, mask)) {
-    	ret = apds9999_read_ps_raw(data, APDS9999_REG_PS_DATA_0, (int *)&data->scan_buf.ps);
-    	if (ret < 0)
-    		goto err_unlock;
+		int ps_val;
+
+		ret = apds9999_read_ps_raw(data, APDS9999_REG_PS_DATA_0, &ps_val);
+		if (ret < 0)
+			goto err_unlock;
+
+		data->scan_buf.ps = (u32)ps_val;
 	}
 
 
@@ -1541,9 +1544,8 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 
 			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
 			// the ordering is based on the sensors register order
-			// IR channel
-			if (test_bit(4, mask))
-				data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
+			// IR channel - active for sure
+			data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
 			// GREEN channel
 			if (test_bit(2, mask))
 				data->scan_buf.green = get_unaligned_le24(&ls_raw[3]);
@@ -1563,9 +1565,8 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 
 			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
 			// the ordering is based on the sensors register order
-			// IR channel
-			if (test_bit(4, mask))
-				data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
+			// IR channel - active for sure
+			data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
 			// ALS/Green channel
 			if (test_bit(5, mask))
 				data->scan_buf.als = get_unaligned_le24(&ls_raw[3]);
@@ -2112,6 +2113,68 @@ static ssize_t apds9999_ls_meas_rate_store(struct device *dev, struct device_att
 
 /* -------------------------- END LS_MEAS_RATE ATTRIBUTES -------------------------- */
 
+/* -------------------------- PS OVERFLOW ATTRIBUTE -------------------------- */
+
+static ssize_t apds9999_ps_overflow_show(struct device *dev, struct device_attribute *attr, char *buf){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_DATA_1_OVRFLW], &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", val);
+}
+
+/* -------------------------- END PS OVERFLOW ATTRIBUTE -------------------------- */
+
+/* -------------------------- PS_CAN_ANA ATTRIBUTES -------------------------- */
+static ssize_t apds9999_ps_ana_can_show(struct device *dev, struct device_attribute *attr, char *buf){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_CAN_ANA], &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", val);
+}
+
+static ssize_t apds9999_ps_ana_can_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	unsigned int val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	// 5-bit: 0-31
+	if (val < 0 || val > 31)
+		return -EINVAL;
+
+	ret = regmap_field_write(data->regfield[APDS9999_RF_PS_CAN_ANA], val);
+	if (ret)
+		return ret;
+
+	return len;
+}
+
+static ssize_t apds9999_ps_ana_can_available_show(struct device *dev, struct device_attribute *attr, char *buf){
+	return sysfs_emit(buf, "[%d %d %d]\n", apds9999_ps_ana_can_range[0], apds9999_ps_ana_can_range[1], apds9999_ps_ana_can_range[2]);
+}
+
+/* -------------------------- END PS_CAN_ANA ATTRIBUTES -------------------------- */
+
+
 /* -------------------------- LS_INT_SEL EVENT ATTRIBUTE -------------------------- */
 
 static ssize_t apds9999_ls_int_sel_show(struct device *dev, struct device_attribute *attr, char *buf){
@@ -2198,50 +2261,6 @@ static const struct attribute_group apds9999_event_attribute_group = {
 };
 
 
-/* -------------------------- PS_CAN_ANA ATTRIBUTES -------------------------- */
-
-static ssize_t apds9999_ps_ana_can_show(struct device *dev, struct device_attribute *attr, char *buf){
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct apds9999_data *data = iio_priv(indio_dev);
-
-	unsigned int val;
-	int ret;
-
-	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_CAN_ANA], &val);
-	if (ret)
-		return ret;
-
-	return sysfs_emit(buf, "%u\n", val);
-}
-
-static ssize_t apds9999_ps_ana_can_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len){
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct apds9999_data *data = iio_priv(indio_dev);
-
-	unsigned int val;
-	int ret;
-
-	ret = kstrtouint(buf, 0, &val);
-	if (ret)
-		return ret;
-
-	// 5-bit: 0-31
-	if (val < 0 || val > 31)
-		return -EINVAL;
-
-	ret = regmap_field_write(data->regfield[APDS9999_RF_PS_CAN_ANA], val);
-	if (ret)
-		return ret;
-
-	return len;
-}
-
-static ssize_t apds9999_ps_ana_can_available_show(struct device *dev, struct device_attribute *attr, char *buf){
-	return sysfs_emit(buf, "[%d %d %d]\n", apds9999_ps_ana_can_range[0], apds9999_ps_ana_can_range[1], apds9999_ps_ana_can_range[2]);
-}
-
-/* -------------------------- END PS_CAN_ANA ATTRIBUTES -------------------------- */
-
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
@@ -2261,10 +2280,6 @@ static IIO_DEVICE_ATTR(ps_vcsel_curr_ma_available, 0444, apds9999_uint_avail_sho
 static IIO_DEVICE_ATTR(ps_pulses, 0644, apds9999_ps_pulses_show, apds9999_ps_pulses_store, 0);
 static IIO_DEVICE_ATTR(ps_pulses_available, 0444, apds9999_ps_pulses_available_show, NULL, 0);
 
-// PS_CAN register: analog cancellation level
-static IIO_DEVICE_ATTR(ps_analog_cancellation, 0644, apds9999_ps_ana_can_show, apds9999_ps_ana_can_store, 0);
-static IIO_DEVICE_ATTR(ps_analog_cancellation_available, 0444, apds9999_ps_ana_can_available_show, NULL, 0);
-
 // PS_MEAS_RATE register: PS resolution and measurement rate
 static IIO_DEVICE_ATTR(ps_reso_bit, 0644, apds9999_ps_reso_show, apds9999_ps_reso_store, 0);
 static IIO_DEVICE_ATTR(ps_reso_bit_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_PS_RESO);
@@ -2276,6 +2291,14 @@ static IIO_DEVICE_ATTR(ls_reso_bit, 0644, apds9999_ls_reso_show, apds9999_ls_res
 static IIO_DEVICE_ATTR(ls_reso_bit_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_LS_RESO);
 static IIO_DEVICE_ATTR(ls_meas_rate_ms, 0644, apds9999_ls_meas_rate_show, apds9999_ls_meas_rate_store, 0);
 static IIO_DEVICE_ATTR(ls_meas_rate_ms_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_LS_RATE);
+
+// PS overflow status
+static IIO_DEVICE_ATTR(ps_overflow, 0444, apds9999_ps_overflow_show, NULL, 0);
+
+// PS_CAN register: analog cancellation level
+static IIO_DEVICE_ATTR(ps_analog_cancellation, 0644, apds9999_ps_ana_can_show, apds9999_ps_ana_can_store, 0);
+static IIO_DEVICE_ATTR(ps_analog_cancellation_available, 0444, apds9999_ps_ana_can_available_show, NULL, 0);
+
 
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
@@ -2293,9 +2316,6 @@ static struct attribute *apds9999_attributes[] = {
 	// PS_PULSES register
 	&iio_dev_attr_ps_pulses.dev_attr.attr,
 	&iio_dev_attr_ps_pulses_available.dev_attr.attr,
-	// PS_CAN register: analog cancellation
-	&iio_dev_attr_ps_analog_cancellation.dev_attr.attr,
-	&iio_dev_attr_ps_analog_cancellation_available.dev_attr.attr,
 	// PS_MEAS_RATE register
 	&iio_dev_attr_ps_reso_bit.dev_attr.attr,
 	&iio_dev_attr_ps_reso_bit_available.dev_attr.attr,
@@ -2306,6 +2326,11 @@ static struct attribute *apds9999_attributes[] = {
 	&iio_dev_attr_ls_reso_bit_available.dev_attr.attr,
 	&iio_dev_attr_ls_meas_rate_ms.dev_attr.attr,
 	&iio_dev_attr_ls_meas_rate_ms_available.dev_attr.attr,
+	// PS overflow status
+	&iio_dev_attr_ps_overflow.dev_attr.attr,
+	// PS_CAN register: analog cancellation
+	&iio_dev_attr_ps_analog_cancellation.dev_attr.attr,
+	&iio_dev_attr_ps_analog_cancellation_available.dev_attr.attr,
 
 	NULL,	/* the attribute array must be NULL terminated */
 };
