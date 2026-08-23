@@ -1668,7 +1668,7 @@ static ssize_t apds9999_vcsel_freq_show(struct device *dev, struct device_attrib
 
 	// check that the bits read is within the valid range of the LUT
 	if (bits >= APDS9999_PS_VCSEL_FREQ_60kHz && bits <= APDS9999_PS_VCSEL_FREQ_100kHz)
-		return sysfs_emit(buf, "%ukHz\n", apds9999_vcsel_freq_lut[bits - APDS9999_PS_VCSEL_FREQ_60kHz]);
+		return sysfs_emit(buf, "%u\n", apds9999_vcsel_freq_lut[bits - APDS9999_PS_VCSEL_FREQ_60kHz]);
 
 	// bit pattern not in table
 	return sysfs_emit(buf, "raw:%u\n", bits);
@@ -1731,7 +1731,7 @@ static ssize_t apds9999_vcsel_curr_show(struct device *dev, struct device_attrib
 	}
 
 	if (bits >= APDS9999_PS_VCSEL_CURR_10mA && bits <= APDS9999_PS_VCSEL_CURR_25mA)
-		return sysfs_emit(buf, "%umA\n", apds9999_vcsel_curr_lut[bits - APDS9999_PS_VCSEL_CURR_10mA]);
+		return sysfs_emit(buf, "%u\n", apds9999_vcsel_curr_lut[bits - APDS9999_PS_VCSEL_CURR_10mA]);
 
 	return sysfs_emit(buf, "raw:%u\n", bits);
 }
@@ -1877,7 +1877,7 @@ static ssize_t apds9999_ps_reso_show(struct device *dev, struct device_attribute
 	}
 
 	// bits is 2 bits wide (0–3), always in range
-	return sysfs_emit(buf, "%u bit\n", apds9999_ps_reso_lut[bits]);
+	return sysfs_emit(buf, "%u\n", apds9999_ps_reso_lut[bits]);
 }
 
 static ssize_t apds9999_ps_reso_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len) {
@@ -1932,7 +1932,7 @@ static ssize_t apds9999_ps_meas_rate_show(struct device *dev, struct device_attr
 	}
 
 	if (bits >= APDS9999_PS_RATE_6_25_MS && bits <= APDS9999_PS_RATE_400_MS)
-		return sysfs_emit(buf, "%u us\n", apds9999_ps_rate_lut[bits - APDS9999_PS_RATE_6_25_MS]);
+		return sysfs_emit(buf, "%u\n", apds9999_ps_rate_lut[bits - APDS9999_PS_RATE_6_25_MS]);
 
 	// bit pattern 0b000 is reserved so maybe it will appear
 	return sysfs_emit(buf, "raw:%u\n", bits);
@@ -2002,7 +2002,7 @@ static ssize_t apds9999_ls_reso_show(struct device *dev, struct device_attribute
 
 	// bits 0b110 and 0b111 are reserved
 	if (bits <= APDS9999_LS_RESO_13_BIT_3_125_MS)
-		return sysfs_emit(buf, "%u bit\n", apds9999_ls_reso_lut[bits]);
+		return sysfs_emit(buf, "%u\n", apds9999_ls_reso_lut[bits]);
 
 	return sysfs_emit(buf, "raw:%u\n", bits);
 }
@@ -2064,7 +2064,7 @@ static ssize_t apds9999_ls_meas_rate_show(struct device *dev, struct device_attr
 
 	// bit pattern 0b111 is reserved
 	if (bits <= APDS9999_LS_RATE_2000_MS)
-		return sysfs_emit(buf, "%u ms\n", apds9999_ls_rate_lut[bits]);
+		return sysfs_emit(buf, "%u\n", apds9999_ls_rate_lut[bits]);
 
 	return sysfs_emit(buf, "raw:%u\n", bits);
 }
