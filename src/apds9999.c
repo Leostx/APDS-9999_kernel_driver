@@ -52,7 +52,8 @@
 #include <linux/log2.h>          // is_power_of_2, ilog2
 #include <linux/string.h>        // memset
 #include <linux/unaligned.h>     // get_unaligned_le24
-#include <linux/interrupt.h>     // request_threaded_irq, IRQ_WAKE_THREAD, IRQF_TRIGGER_LOW
+#include <linux/interrupt.h>     // request_threaded_irq, IRQ_WAKE_THREAD, IRQF_ONESHOT
+#include <linux/irq.h>              // irq_get_irq_data, irqd_get_trigger_type
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
 // the following are for the triggered buffer
 #ifdef APDS9999_BUFFER
@@ -2475,12 +2476,16 @@ static int apds9999_probe(struct i2c_client *client){
 	 * the IRQF flags mean the following:
 	 *  IRQF_TRIGGER_LOW: level-triggered. fires as long as the line is low. Matches the datasheet
 	 *  IRQF_ONESHOT: this keeps the IRQ line masked until the soft-IRQ is handled to prevent spurious fires
+	 *
+	 * In this case we do not set IRQF_TRIGGER_LOW but we read it form the IRQ descriptor
 	 */
 	if (client->irq > 0) {
+		unsigned long irq_flags = irqd_get_trigger_type(irq_get_irq_data(client->irq));
+
 		ret = devm_request_threaded_irq(&client->dev, client->irq,
 						apds9999_irq_handler,
 						apds9999_irq_thread,
-						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+						irq_flags | IRQF_ONESHOT,
 						APDS9999_DRIVER_NAME, indio_dev);
 
 
