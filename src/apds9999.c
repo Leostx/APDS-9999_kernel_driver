@@ -19,9 +19,11 @@
  *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
  *       and regulator handling still missing: dev_pm_ops
  *
- * - [ ] test events
- * - [ ] test triggered buffers
  * - [ ] *_available attributes for events
+ *          The standard iio core does not provide the functionality to add a available mask
+ *          to an event. Therefore we would need to create a custom event attribute and add
+ *          it through an ext_info struct.
+ *          For simplicity we keep it as is for now.
  *
  * - [ ] make read only attributes read only also in sysfs:
  * 	        The standard iio core way is to expose the same permissions for all attributes.
@@ -484,7 +486,6 @@ static const struct regmap_config apds9999_regmap_config = {
 	.max_register = APDS9999_REG_LS_THRES_VAR,
 	.cache_type = REGCACHE_MAPLE,				/* this is the type of cache. Seems the best tradeoff */
 
-	//TODO maybe wee want to add ranges for the consecutive reads
 };
 
 
