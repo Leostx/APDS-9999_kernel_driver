@@ -15,9 +15,6 @@
 /*
  * --- TODO ---
  *
- * - [ ] power management basics: PS_EN / LS_EN / RGB_MODE now toggleable
- *       via sysfs (ps_enable, ls_enable, rgb_mode) - runtime PM / autosuspend
- *       and regulator handling still missing: dev_pm_ops
  *
  * - [ ] *_available attributes for events
  *          The standard iio core does not provide the functionality to add a available mask
@@ -57,6 +54,8 @@
 #include <linux/interrupt.h>     // request_threaded_irq, IRQ_WAKE_THREAD, IRQF_ONESHOT
 #include <linux/irq.h>              // irq_get_irq_data, irqd_get_trigger_type
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
+#include <linux/pm.h>              // dev_pm_ops, SET_RUNTIME_PM_OPS, SET_SYSTEM_SLEEP_PM_OPS
+#include <linux/pm_runtime.h>      // pm_runtime_set_active, pm_runtime_enable, etc.
 // the following are for the triggered buffer
 #ifdef APDS9999_BUFFER
 #include <linux/iio/buffer.h>
@@ -1489,8 +1488,28 @@ static int apds9999_buffer_preenable(struct iio_dev *indio_dev){
 	return 0;
 }
 
+static int apds9999_buffer_postenable(struct iio_dev *indio_dev){
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	// get a reference to the PowerManagement, so the device is not powered off while the buffer is active
+	pm_runtime_get_sync(&data->client->dev);
+
+	return 0;
+}
+
+static int apds9999_buffer_predisable(struct iio_dev *indio_dev){
+	struct apds9999_data *data = iio_priv(indio_dev);
+
+	// release the runtime PM reference acquired in postenable. So the device can power off
+	pm_runtime_put_autosuspend(&data->client->dev);
+
+	return 0;
+}
+
 static const struct iio_buffer_setup_ops apds9999_buffer_setup_ops = {
-	.preenable = apds9999_buffer_preenable,
+	.preenable  = apds9999_buffer_preenable,
+	.postenable = apds9999_buffer_postenable,
+	.predisable = apds9999_buffer_predisable,
 };
 
 /* ------------------- TRIGGERED BUFFER HANDLER ------------------- */
@@ -2386,6 +2405,48 @@ static const struct iio_info apds9999_info = {
 	.write_event_value  = apds9999_write_event_value,
 };
 
+/* ------------------- POWER MANAGEMENT ------------------- */
+
+static int apds9999_power_on(struct apds9999_data *data){
+    // takes register, mask, and value to update
+	return regmap_update_bits(data->regmap, APDS9999_REG_MAIN_CTRL,
+				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN,
+				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN);
+}
+
+static int apds9999_power_off(struct apds9999_data *data){
+    // takes register, mask, and value to update
+	return regmap_update_bits(data->regmap, APDS9999_REG_MAIN_CTRL,
+				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN,
+				  0);
+}
+
+// this function is called by the PM core when the device is idle and the autosuspend delay has expired.
+static int apds9999_runtime_suspend(struct device *dev){
+	struct apds9999_data *data = iio_priv(i2c_get_clientdata(to_i2c_client(dev)));
+
+	return apds9999_power_off(data);
+}
+
+// this function is called by the PM core when the device is needed again
+static int apds9999_runtime_resume(struct device *dev){
+	struct apds9999_data *data = iio_priv(i2c_get_clientdata(to_i2c_client(dev)));
+
+	return apds9999_power_on(data);
+}
+
+static const struct dev_pm_ops apds9999_pm_ops = {
+    // this sets up the system-wide suspend/resume callbacks
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+
+	// this sets the runtime PM callbacks we defined above. The last argument is the idle callback
+	SET_RUNTIME_PM_OPS(apds9999_runtime_suspend, apds9999_runtime_resume, NULL)
+};
+
+
+/* ------------------- END POWER MANAGEMENT ------------------- */
+
+
 // this function gets called during probe to initialize the chip
 // It checks the part id register to verify the chip is an APDS-9999
 // and then resets it to a known state
@@ -2426,10 +2487,9 @@ static int apds9999_chip_init(struct apds9999_data *data){
 	// Sleep between 1-1.5ms to allow the reset to complete. The datasheet talks abaout 500us, so we are conservative
 	usleep_range(1000, 1500);
 
-	// by default we enable both PS and LS, and select RGB_MODE
-	ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL,
-			APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN | APDS9999_CTRL_RGB_MODE);
-	if(ret){
+	// power on the sensor (enables PS + LS)
+	ret = apds9999_power_on(data);
+	if (ret) {
 		dev_err(&data->indio_dev->dev, "failed enabling PS/LS.\n");
 		return ret;
 	}
@@ -2538,6 +2598,18 @@ static int apds9999_probe(struct i2c_client *client){
 	if (ret)
 		return ret;
 
+	// this sets the device as fully active in the PM runtime
+	// Has to be called before pm_runtime_enable() so the PM does not try to resume it
+	pm_runtime_set_active(&client->dev);
+	// this enables the runtime PM framework for this device
+	pm_runtime_enable(&client->dev);
+	// this is the timeout after which the PM powers down the device
+	pm_runtime_set_autosuspend_delay(&client->dev, 2000);
+	// this switches the device to the autosuspend policy
+	// TODO: consider that this may give raise to IRQ race conditions
+	pm_runtime_use_autosuspend(&client->dev);
+
+
 	dev_info(&client->dev,"Hello world from apds9999");
 	return 0;
 }
@@ -2550,8 +2622,12 @@ static void apds9999_remove(struct i2c_client *client){
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct apds9999_data *data = iio_priv(indio_dev);
 
-	// power down both PS and LS on module removal
-	regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, 0x00);
+	// disable the runtime PM framework for this device
+	pm_runtime_disable(&client->dev);
+	// mark the device as suspended in the PM core's state machine
+	pm_runtime_set_suspended(&client->dev);
+	// power off the sensor
+	apds9999_power_off(data);
 
 	dev_info(&client->dev,"Goodbye world from apds9999");
 }
@@ -2573,10 +2649,12 @@ static const struct of_device_id apds9999_oftable[] = {
 
 MODULE_DEVICE_TABLE(of, apds9999_oftable);
 
+
 static struct i2c_driver apds9999_driver = {
       .driver = {
               .name           = APDS9999_DRIVER_NAME,   // this is the drivers name and should match the modules name
               .of_match_table = apds9999_oftable,
+              .pm             = pm_ptr(&apds9999_pm_ops),
       },
 
       .id_table       = apds9999_idtable,
