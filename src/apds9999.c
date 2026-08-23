@@ -797,20 +797,10 @@ struct apds9999_data {
 
 // this function reads the raw value from the proximity sensor into val
 static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address, int *val){
-	// variable to hold the resolution setting
-	unsigned int setting;
 	// regmap bulk read result
 	__le16 regs;
 	// error code EINVAL is when the argument is invalid or out of range - negative since used as return value
 	int ret = -EINVAL;
-
-	// read the resolution setting. This should get cached by regmap if read multiple times consecutively
-	ret = regmap_field_read(data->regfield[APDS9999_RF_PS_RESO], &setting);
-	// if regmap reading the settings failed, return early with the error code
-	if(ret){
-		dev_err(&data->indio_dev->dev, "regmap reading ps resolution failed.\n");
-		return ret;
-	}
 
 	// bulk read PS_DATA_0 and PS_DATA_1
 	ret = regmap_bulk_read(data->regmap, address, &regs, 2);
