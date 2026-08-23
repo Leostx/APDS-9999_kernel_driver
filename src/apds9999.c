@@ -965,8 +965,9 @@ static int apds9999_read_raw(struct iio_dev *indio_dev, struct iio_chan_spec con
 			if (ret)
 				return ret;
 
-			// Mask out the 5 MSBs since they are the analog cancellation level. Keep the lower 11
-			*val = le16_to_cpu(buf16) & (APDS9999_PS_CAN_DIG_HIGH | 0xFF);
+			// Mask out the 5 MSBs of the high byte (analog cancellation). Keep the lower 11 bits.
+			// PS_CAN_1 is in the upper byte, so we have to shift the mask accordingly
+			*val = le16_to_cpu(buf16) & ((APDS9999_PS_CAN_DIG_HIGH << 8) | 0xFF);
 
 			return IIO_VAL_INT;
 		}
