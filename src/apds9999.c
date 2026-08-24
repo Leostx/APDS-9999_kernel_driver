@@ -780,19 +780,6 @@ struct apds9999_data {
 	struct regmap_field *regfield[APDS9999_RF_COUNT];
 
 	struct mutex lock;
-
-#ifdef APDS9999_BUFFER
-	// this buffer holds the data for the triggered buffer. It should be alligned correctly
-	struct {
-		u32 ps;
-		u32 red;
-		u32 green;
-		u32 blue;
-		u32 ir;
-		u32 als;
-		s64 timestamp;
-	} scan_buf;
-#endif
 };
 
 // this function reads the raw value from the proximity sensor into val
@@ -810,11 +797,9 @@ static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address
 
 		// mask the actual value to 11 bits. The overflow bit can be checked via ps_overflow sysfs attribute
 		*val = raw & GENMASK(10, 0);
-	}
 
-	// if ret is 0, everything went fine. Inform the caller that we read an int
-	if (!ret)
 		ret = IIO_VAL_INT;
+	}
 
 	return ret;
 }
@@ -1527,8 +1512,10 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 
 	mutex_lock(&data->lock);
 
-	// clear the buffer, so no stale data is pushed to userspace
-	memset(&data->scan_buf, 0, sizeof(data->scan_buf));
+
+	// Pack the data into a flat buffer in scan_index order
+	u32 scan_data[6];
+	int idx = 0;
 
 	if (test_bit(0, mask) && test_bit(4, mask)) {
 		// PS + LS both active: single bulk read from PS_DATA_0 covering both sensors
@@ -1545,20 +1532,17 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 				goto err_unlock;
 			}
 
-			// PS channel, the masks removes the overflow bits
-			data->scan_buf.ps = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
-
-			// IR channel - active for sure
-			data->scan_buf.ir = get_unaligned_le24(&raw[2]);
-			// GREEN channel
-			if (test_bit(2, mask))
-				data->scan_buf.green = get_unaligned_le24(&raw[5]);
-			// BLUE channel
-			if (test_bit(3, mask))
-				data->scan_buf.blue = get_unaligned_le24(&raw[8]);
-			// RED channel
+			// Pack in scan_index order: 0=ps, 1=red, 2=green, 3=blue, 4=ir
+			if (test_bit(0, mask))
+				scan_data[idx++] = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
 			if (test_bit(1, mask))
-				data->scan_buf.red = get_unaligned_le24(&raw[11]);
+				scan_data[idx++] = get_unaligned_le24(&raw[11]);
+			if (test_bit(2, mask))
+				scan_data[idx++] = get_unaligned_le24(&raw[5]);
+			if (test_bit(3, mask))
+				scan_data[idx++] = get_unaligned_le24(&raw[8]);
+			if (test_bit(4, mask))
+				scan_data[idx++] = get_unaligned_le24(&raw[2]);
 		} else {
 			// PS(2) + IR(3) + GREEN/ALS(3) = 8 bytes
 			u8 raw[8];
@@ -1569,12 +1553,13 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 				goto err_unlock;
 			}
 
-			data->scan_buf.ps = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
-			// IR channel - active for sure
-			data->scan_buf.ir = get_unaligned_le24(&raw[2]);
-			// ALS/Green channel
+			// Pack in scan_index order: 0=ps, 4=ir, 5=als
+			if (test_bit(0, mask))
+				scan_data[idx++] = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
+			if (test_bit(4, mask))
+				scan_data[idx++] = get_unaligned_le24(&raw[2]);
 			if (test_bit(5, mask))
-				data->scan_buf.als = get_unaligned_le24(&raw[5]);
+				scan_data[idx++] = get_unaligned_le24(&raw[5]);
 		}
 
 	} else if (test_bit(0, mask)) {
@@ -1582,12 +1567,12 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 		int ps_val;
 
 		ret = apds9999_read_ps_raw(data, APDS9999_REG_PS_DATA_0, &ps_val);
-		if (ret){
+		if (ret < 0){
 			dev_err(&indio_dev->dev, "failed to read data (PS only): %d\n", ret);
 			goto err_unlock;
 		}
 
-		data->scan_buf.ps = (u32)ps_val;
+		scan_data[idx++] = (u32)ps_val;
 
 	} else if (test_bit(4, mask)) {
 		// LS only
@@ -1604,19 +1589,15 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 				goto err_unlock;
 			}
 
-			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
-			// the ordering is based on the sensors register order
-			// IR channel - active for sure
-			data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
-			// GREEN channel
-			if (test_bit(2, mask))
-				data->scan_buf.green = get_unaligned_le24(&ls_raw[3]);
-			// BLUE channel
-			if (test_bit(3, mask))
-				data->scan_buf.blue = get_unaligned_le24(&ls_raw[6]);
-			// RED channel
+			// Pack in scan_index order: 1=red, 2=green, 3=blue, 4=ir
 			if (test_bit(1, mask))
-				data->scan_buf.red = get_unaligned_le24(&ls_raw[9]);
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[9]);
+			if (test_bit(2, mask))
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[3]);
+			if (test_bit(3, mask))
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[6]);
+			if (test_bit(4, mask))
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[0]);
 		} else {
 			// read 3 bytes for IR and 3 bytes for ALS
 			u8 ls_raw[6];
@@ -1627,19 +1608,17 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 				goto err_unlock;
 			}
 
-			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
-			// the ordering is based on the sensors register order
-			// IR channel - active for sure
-			data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
-			// ALS/Green channel
+			// Pack in scan_index order: 4=ir, 5=als
+			if (test_bit(4, mask))
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[0]);
 			if (test_bit(5, mask))
-				data->scan_buf.als = get_unaligned_le24(&ls_raw[3]);
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[3]);
 		}
 	}
 
 	mutex_unlock(&data->lock);
 
-	iio_push_to_buffers_with_timestamp(indio_dev, &data->scan_buf, iio_get_time_ns(indio_dev));
+	iio_push_to_buffers_with_timestamp(indio_dev, scan_data, iio_get_time_ns(indio_dev));
 	iio_trigger_notify_done(indio_dev->trig);
 
 	return IRQ_HANDLED;
