@@ -1468,8 +1468,10 @@ static int apds9999_buffer_preenable(struct iio_dev *indio_dev){
 
 	// get rgb mode
 	ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
-	if (ret)
+	if (ret){
+		dev_err(&indio_dev->dev, "failed to read RGB mode: %d\n", ret);
 		return ret;
+	}
 
 	bool wants_als = test_bit(5, mask);
 	bool wants_rgb = test_bit(1, mask) || test_bit(2, mask) || test_bit(3, mask);
@@ -1538,8 +1540,10 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 			u8 raw[14];
 
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_PS_DATA_0, raw, sizeof(raw));
-			if (ret)
+			if (ret){
+				dev_err(&indio_dev->dev, "failed to read data (PS+RGB): %d\n", ret);
 				goto err_unlock;
+			}
 
 			// PS channel, the masks removes the overflow bits
 			data->scan_buf.ps = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
@@ -1560,8 +1564,10 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 			u8 raw[8];
 
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_PS_DATA_0, raw, sizeof(raw));
-			if (ret)
+			if (ret){
+				dev_err(&indio_dev->dev, "failed to read data (PS+ALS): %d\n", ret);
 				goto err_unlock;
+			}
 
 			data->scan_buf.ps = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
 			// IR channel - active for sure
@@ -1576,8 +1582,10 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 		int ps_val;
 
 		ret = apds9999_read_ps_raw(data, APDS9999_REG_PS_DATA_0, &ps_val);
-		if (ret < 0)
+		if (ret){
+			dev_err(&indio_dev->dev, "failed to read data (PS only): %d\n", ret);
 			goto err_unlock;
+		}
 
 		data->scan_buf.ps = (u32)ps_val;
 
@@ -1591,8 +1599,10 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 			u8 ls_raw[12];
 
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_LS_DATA_IR_0, ls_raw, sizeof(ls_raw));
-			if (ret)
+			if (ret){
+				dev_err(&indio_dev->dev, "failed to read data (RGB): %d\n", ret);
 				goto err_unlock;
+			}
 
 			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
 			// the ordering is based on the sensors register order
@@ -1612,8 +1622,10 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 			u8 ls_raw[6];
 
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_LS_DATA_IR_0, ls_raw, sizeof(ls_raw));
-			if (ret)
+			if (ret){
+				dev_err(&indio_dev->dev, "failed to read data (ALS): %d\n", ret);
 				goto err_unlock;
+			}
 
 			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
 			// the ordering is based on the sensors register order
@@ -2607,7 +2619,7 @@ static int apds9999_probe(struct i2c_client *client){
 	pm_runtime_set_autosuspend_delay(&client->dev, 2000);
 	// this switches the device to the autosuspend policy
 	// TODO: consider that this may give raise to IRQ race conditions
-	pm_runtime_use_autosuspend(&client->dev);
+	//pm_runtime_use_autosuspend(&client->dev);
 
 
 	dev_info(&client->dev,"Hello world from apds9999");
