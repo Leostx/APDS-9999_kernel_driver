@@ -1406,7 +1406,6 @@ static irqreturn_t apds9999_irq_thread(int irq, void *p){
 	s64 timestamp;
 	int ret;
 
-
 	// reads and clears the main status register
 	ret = regmap_read(data->regmap, APDS9999_REG_MAIN_STATUS, &status);
 	if (ret) {
@@ -1430,11 +1429,30 @@ static irqreturn_t apds9999_irq_thread(int irq, void *p){
 
 	// check if LS interrupt status is set
 	if (status & APDS9999_STATUS_LS_INT) {
-        // we push the event with the dir either and the type threshold, since checking would require an additional read
+		unsigned int int_cfg;
+
+		enum iio_event_type ev_type = IIO_EV_TYPE_THRESH;
+		enum iio_event_direction ev_dir = IIO_EV_DIR_EITHER;
+
+		// read INT_CFG to determine whether the interrupt is a threshold or variance (change) event
+		ret = regmap_read(data->regmap, APDS9999_REG_INT_CFG, &int_cfg);
+		if (ret) {
+			dev_err(&data->client->dev, "failed to read INT_CFG: %d\n", ret);
+			return IRQ_HANDLED;
+		}
+
+		if (int_cfg & APDS9999_INT_CFG_LS_VAR_MODE) {
+			// variance mode: the interrupt was triggered by a change event
+			ev_type = IIO_EV_TYPE_CHANGE;
+			ev_dir  = IIO_EV_DIR_NONE;
+		}
+
+		// we push the event with the dir either if we are in threshold, since checking would require an additional read
         // TODO: do we want to do the additional reads?
 		iio_push_event(indio_dev,
-			       IIO_UNMOD_EVENT_CODE(IIO_LIGHT, 0, IIO_EV_TYPE_THRESH, IIO_EV_DIR_EITHER),
-			       timestamp);
+			IIO_UNMOD_EVENT_CODE(IIO_LIGHT, 0, ev_type, ev_dir),
+			timestamp);
+
 	}
 
 	return IRQ_HANDLED;
