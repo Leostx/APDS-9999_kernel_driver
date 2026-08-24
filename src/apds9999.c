@@ -1677,6 +1677,24 @@ err_unlock:
 
 /* ------------------- END INTERRUPT HANDLERS ------------------- */
 
+/* ------------------- POWER MANAGEMENT ------------------- */
+
+static int apds9999_power_on(struct apds9999_data *data){
+    // takes register, mask, and value to update
+	return regmap_update_bits(data->regmap, APDS9999_REG_MAIN_CTRL,
+				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN,
+				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN);
+}
+
+static int apds9999_power_off(struct apds9999_data *data){
+    // takes register, mask, and value to update
+	return regmap_update_bits(data->regmap, APDS9999_REG_MAIN_CTRL,
+				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN,
+				  0);
+}
+
+/* ------------------- END POWER MANAGEMENT ------------------- */
+
 /* -------------------------- CUSTOM SYSFS ATTRIBUTES -------------------------- */
 // Here we have custom sysfs attributs to get the full control over our driver
 
@@ -2477,23 +2495,7 @@ static const struct iio_info apds9999_info = {
 	.write_event_value  = apds9999_write_event_value,
 };
 
-/* ------------------- POWER MANAGEMENT ------------------- */
 
-static int apds9999_power_on(struct apds9999_data *data){
-    // takes register, mask, and value to update
-	return regmap_update_bits(data->regmap, APDS9999_REG_MAIN_CTRL,
-				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN,
-				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN);
-}
-
-static int apds9999_power_off(struct apds9999_data *data){
-    // takes register, mask, and value to update
-	return regmap_update_bits(data->regmap, APDS9999_REG_MAIN_CTRL,
-				  APDS9999_CTRL_PS_EN | APDS9999_CTRL_LS_EN,
-				  0);
-}
-
-/* ------------------- END POWER MANAGEMENT ------------------- */
 
 
 // this function gets called during probe to initialize the chip
