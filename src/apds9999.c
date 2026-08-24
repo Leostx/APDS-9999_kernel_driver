@@ -2610,13 +2610,14 @@ static int apds9999_probe(struct i2c_client *client){
 	// this sets the device as fully active in the PM runtime
 	// Has to be called before pm_runtime_enable() so the PM does not try to resume it
 	pm_runtime_set_active(&client->dev);
-	// this enables the runtime PM framework for this device
-	pm_runtime_enable(&client->dev);
+	// configure autosuspend BEFORE enabling the PM framework
 	// this is the timeout after which the PM powers down the device
 	pm_runtime_set_autosuspend_delay(&client->dev, 2000);
 	// this switches the device to the autosuspend policy
 	// TODO: consider that this may give raise to IRQ race conditions
-	//pm_runtime_use_autosuspend(&client->dev);
+	pm_runtime_use_autosuspend(&client->dev);
+	// this enables the runtime PM framework for this device
+	pm_runtime_enable(&client->dev);
 
 
 	dev_info(&client->dev,"Hello world from apds9999");
