@@ -2375,7 +2375,7 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
         dev_err(&data->indio_dev->dev, "regcache_sync failed: %d\n", ret);
         return ret;
     }
-    return sysfs_emit(buf, "Reset\n");
+    return len;
 }
 
 /* -------------------------- END RESET EVENT ATTRIBUTE -------------------------- */
