@@ -1,0 +1,11 @@
+# APDS-9999 Kernel Driver
+
+## kernel-tools README
+
+This directory contains two little utilities for testing events and buffers of the iio subsystem.
+
+The source code was downloaded from the [Linux kernel repo](https://github.com/torvalds/linux/tree/master/tools/iio).
+
+I modified the iio_generic_buffer.c, such that it returns the exit code 0 on success. (Line 762)
+
+The makefile is a simple version that just compiles the two utilities. It is not from the source above.

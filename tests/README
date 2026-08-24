@@ -1,0 +1,33 @@
+# APDS-9999 Kernel Driver
+
+## `tests/` README
+
+This directory contains the test suite for the APDS-9999 kernel driver.
+
+Be aware that this was created by generative AI and should be treated as such.
+I did not review the generated code. It is intended to help with the physical testing, nothing else.
+
+It is structured as follows:
+
+- static/ : contains static test cases which try the possible configurations of the driver.
+            It considers edge-cases and checks the working of the driver under various settings.
+
+- dynamic/ : contains dynamic test cases which may need interaction with the driver.
+             There are automated tests that ensure the measurements are actually happening
+             and then there are interactive tests that require user input to the sensor.
+
+- dynamic/kernel-tools: contains some utilities used by the dynamic tests.
+
+To run the tests, cd into the respecive directory (static or dynamic) and run `sudo bash run_tests.sh`.
+This will go through the different test files `text_0x_*` and run them sequentially.
+
+
+## kernel-tools README
+
+This directory contains two little utilities for testing events and buffers of the iio subsystem.
+
+The source code was downloaded from the [Linux kernel repo](https://github.com/torvalds/linux/tree/master/tools/iio).
+
+I modified the iio_generic_buffer.c, such that it returns the exit code 0 on success. (Line 762)
+
+The makefile is a simple version that just compiles the two utilities. It is not from the source above.

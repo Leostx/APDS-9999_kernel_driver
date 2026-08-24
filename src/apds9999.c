@@ -33,6 +33,9 @@
  *          Since the Interrupt lines are threshold based and not data-ready, it doesn't
  *          seem to make sense to use these fields.
  *
+ * - [ ] Power Management may be a usefull feature
+ *          The driver could disable the sensor to save power
+ *
  */
 
 #include <assert.h>
@@ -56,9 +59,7 @@
 #include <linux/irq.h>              // irq_get_irq_data, irqd_get_trigger_type
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
 #include <linux/pm.h>              // dev_pm_ops, SET_RUNTIME_PM_OPS, SET_SYSTEM_SLEEP_PM_OPS
-#include <linux/pm_runtime.h>      // pm_runtime_set_active, pm_runtime_enable, etc.
-#include <stddef.h>
-#include <stdio.h>
+
 // the following are for the triggered buffer
 #ifdef APDS9999_BUFFER
 #include <linux/iio/buffer.h>
@@ -783,19 +784,6 @@ struct apds9999_data {
 	struct regmap_field *regfield[APDS9999_RF_COUNT];
 
 	struct mutex lock;
-
-#ifdef APDS9999_BUFFER
-	// this buffer holds the data for the triggered buffer. It should be alligned correctly
-	struct {
-		u32 ps;
-		u32 red;
-		u32 green;
-		u32 blue;
-		u32 ir;
-		u32 als;
-		s64 timestamp;
-	} scan_buf;
-#endif
 };
 
 // this function reads the raw value from the proximity sensor into val
@@ -813,11 +801,9 @@ static int apds9999_read_ps_raw(struct apds9999_data *data, unsigned int address
 
 		// mask the actual value to 11 bits. The overflow bit can be checked via ps_overflow sysfs attribute
 		*val = raw & GENMASK(10, 0);
-	}
 
-	// if ret is 0, everything went fine. Inform the caller that we read an int
-	if (!ret)
 		ret = IIO_VAL_INT;
+	}
 
 	return ret;
 }
@@ -1424,7 +1410,6 @@ static irqreturn_t apds9999_irq_thread(int irq, void *p){
 	s64 timestamp;
 	int ret;
 
-
 	// reads and clears the main status register
 	ret = regmap_read(data->regmap, APDS9999_REG_MAIN_STATUS, &status);
 	if (ret) {
@@ -1448,11 +1433,30 @@ static irqreturn_t apds9999_irq_thread(int irq, void *p){
 
 	// check if LS interrupt status is set
 	if (status & APDS9999_STATUS_LS_INT) {
-        // we push the event with the dir either and the type threshold, since checking would require an additional read
+		unsigned int int_cfg;
+
+		enum iio_event_type ev_type = IIO_EV_TYPE_THRESH;
+		enum iio_event_direction ev_dir = IIO_EV_DIR_EITHER;
+
+		// read INT_CFG to determine whether the interrupt is a threshold or variance (change) event
+		ret = regmap_read(data->regmap, APDS9999_REG_INT_CFG, &int_cfg);
+		if (ret) {
+			dev_err(&data->client->dev, "failed to read INT_CFG: %d\n", ret);
+			return IRQ_HANDLED;
+		}
+
+		if (int_cfg & APDS9999_INT_CFG_LS_VAR_MODE) {
+			// variance mode: the interrupt was triggered by a change event
+			ev_type = IIO_EV_TYPE_CHANGE;
+			ev_dir  = IIO_EV_DIR_NONE;
+		}
+
+		// we push the event with the dir either if we are in threshold, since checking would require an additional read
         // TODO: do we want to do the additional reads?
 		iio_push_event(indio_dev,
-			       IIO_UNMOD_EVENT_CODE(IIO_LIGHT, 0, IIO_EV_TYPE_THRESH, IIO_EV_DIR_EITHER),
-			       timestamp);
+			IIO_UNMOD_EVENT_CODE(IIO_LIGHT, 0, ev_type, ev_dir),
+			timestamp);
+
 	}
 
 	return IRQ_HANDLED;
@@ -1471,8 +1475,10 @@ static int apds9999_buffer_preenable(struct iio_dev *indio_dev){
 
 	// get rgb mode
 	ret = regmap_field_read(data->regfield[APDS9999_RF_CTRL_RGB_MODE], &rgb_mode);
-	if (ret)
+	if (ret){
+		dev_err(&indio_dev->dev, "failed to read RGB mode: %d\n", ret);
 		return ret;
+	}
 
 	bool wants_als = test_bit(5, mask);
 	bool wants_rgb = test_bit(1, mask) || test_bit(2, mask) || test_bit(3, mask);
@@ -1491,28 +1497,8 @@ static int apds9999_buffer_preenable(struct iio_dev *indio_dev){
 	return 0;
 }
 
-static int apds9999_buffer_postenable(struct iio_dev *indio_dev){
-	struct apds9999_data *data = iio_priv(indio_dev);
-
-	// get a reference to the PowerManagement, so the device is not powered off while the buffer is active
-	pm_runtime_get_sync(&data->client->dev);
-
-	return 0;
-}
-
-static int apds9999_buffer_predisable(struct iio_dev *indio_dev){
-	struct apds9999_data *data = iio_priv(indio_dev);
-
-	// release the runtime PM reference acquired in postenable. So the device can power off
-	pm_runtime_put_autosuspend(&data->client->dev);
-
-	return 0;
-}
-
 static const struct iio_buffer_setup_ops apds9999_buffer_setup_ops = {
 	.preenable  = apds9999_buffer_preenable,
-	.postenable = apds9999_buffer_postenable,
-	.predisable = apds9999_buffer_predisable,
 };
 
 /* ------------------- TRIGGERED BUFFER HANDLER ------------------- */
@@ -1528,8 +1514,10 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 
 	mutex_lock(&data->lock);
 
-	// clear the buffer, so no stale data is pushed to userspace
-	memset(&data->scan_buf, 0, sizeof(data->scan_buf));
+
+	// Pack the data into a flat buffer in scan_index order
+	u32 scan_data[6];
+	int idx = 0;
 
 	if (test_bit(0, mask) && test_bit(4, mask)) {
 		// PS + LS both active: single bulk read from PS_DATA_0 covering both sensors
@@ -1541,37 +1529,39 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 			u8 raw[14];
 
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_PS_DATA_0, raw, sizeof(raw));
-			if (ret)
+			if (ret){
+				dev_err(&indio_dev->dev, "failed to read data (PS+RGB): %d\n", ret);
 				goto err_unlock;
+			}
 
-			// PS channel, the masks removes the overflow bits
-			data->scan_buf.ps = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
-
-			// IR channel - active for sure
-			data->scan_buf.ir = get_unaligned_le24(&raw[2]);
-			// GREEN channel
-			if (test_bit(2, mask))
-				data->scan_buf.green = get_unaligned_le24(&raw[5]);
-			// BLUE channel
-			if (test_bit(3, mask))
-				data->scan_buf.blue = get_unaligned_le24(&raw[8]);
-			// RED channel
+			// Pack in scan_index order: 0=ps, 1=red, 2=green, 3=blue, 4=ir
+			if (test_bit(0, mask))
+				scan_data[idx++] = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
 			if (test_bit(1, mask))
-				data->scan_buf.red = get_unaligned_le24(&raw[11]);
+				scan_data[idx++] = get_unaligned_le24(&raw[11]);
+			if (test_bit(2, mask))
+				scan_data[idx++] = get_unaligned_le24(&raw[5]);
+			if (test_bit(3, mask))
+				scan_data[idx++] = get_unaligned_le24(&raw[8]);
+			if (test_bit(4, mask))
+				scan_data[idx++] = get_unaligned_le24(&raw[2]);
 		} else {
 			// PS(2) + IR(3) + GREEN/ALS(3) = 8 bytes
 			u8 raw[8];
 
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_PS_DATA_0, raw, sizeof(raw));
-			if (ret)
+			if (ret){
+				dev_err(&indio_dev->dev, "failed to read data (PS+ALS): %d\n", ret);
 				goto err_unlock;
+			}
 
-			data->scan_buf.ps = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
-			// IR channel - active for sure
-			data->scan_buf.ir = get_unaligned_le24(&raw[2]);
-			// ALS/Green channel
+			// Pack in scan_index order: 0=ps, 4=ir, 5=als
+			if (test_bit(0, mask))
+				scan_data[idx++] = get_unaligned_le16(&raw[0]) & GENMASK(10, 0);
+			if (test_bit(4, mask))
+				scan_data[idx++] = get_unaligned_le24(&raw[2]);
 			if (test_bit(5, mask))
-				data->scan_buf.als = get_unaligned_le24(&raw[5]);
+				scan_data[idx++] = get_unaligned_le24(&raw[5]);
 		}
 
 	} else if (test_bit(0, mask)) {
@@ -1579,10 +1569,12 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 		int ps_val;
 
 		ret = apds9999_read_ps_raw(data, APDS9999_REG_PS_DATA_0, &ps_val);
-		if (ret < 0)
+		if (ret < 0){
+			dev_err(&indio_dev->dev, "failed to read data (PS only): %d\n", ret);
 			goto err_unlock;
+		}
 
-		data->scan_buf.ps = (u32)ps_val;
+		scan_data[idx++] = (u32)ps_val;
 
 	} else if (test_bit(4, mask)) {
 		// LS only
@@ -1594,43 +1586,41 @@ static irqreturn_t apds9999_trigger_handler(int irq, void *p){
 			u8 ls_raw[12];
 
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_LS_DATA_IR_0, ls_raw, sizeof(ls_raw));
-			if (ret)
+			if (ret){
+				dev_err(&indio_dev->dev, "failed to read data (RGB): %d\n", ret);
 				goto err_unlock;
+			}
 
-			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
-			// the ordering is based on the sensors register order
-			// IR channel - active for sure
-			data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
-			// GREEN channel
-			if (test_bit(2, mask))
-				data->scan_buf.green = get_unaligned_le24(&ls_raw[3]);
-			// BLUE channel
-			if (test_bit(3, mask))
-				data->scan_buf.blue = get_unaligned_le24(&ls_raw[6]);
-			// RED channel
+			// Pack in scan_index order: 1=red, 2=green, 3=blue, 4=ir
 			if (test_bit(1, mask))
-				data->scan_buf.red = get_unaligned_le24(&ls_raw[9]);
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[9]);
+			if (test_bit(2, mask))
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[3]);
+			if (test_bit(3, mask))
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[6]);
+			if (test_bit(4, mask))
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[0]);
 		} else {
 			// read 3 bytes for IR and 3 bytes for ALS
 			u8 ls_raw[6];
 
 			ret = regmap_bulk_read(data->regmap, APDS9999_REG_LS_DATA_IR_0, ls_raw, sizeof(ls_raw));
-			if (ret)
+			if (ret){
+				dev_err(&indio_dev->dev, "failed to read data (ALS): %d\n", ret);
 				goto err_unlock;
+			}
 
-			// the get_unaligned_le24 reads 3 bytes and converts them to a 24-bit value
-			// the ordering is based on the sensors register order
-			// IR channel - active for sure
-			data->scan_buf.ir = get_unaligned_le24(&ls_raw[0]);
-			// ALS/Green channel
+			// Pack in scan_index order: 4=ir, 5=als
+			if (test_bit(4, mask))
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[0]);
 			if (test_bit(5, mask))
-				data->scan_buf.als = get_unaligned_le24(&ls_raw[3]);
+				scan_data[idx++] = get_unaligned_le24(&ls_raw[3]);
 		}
 	}
 
 	mutex_unlock(&data->lock);
 
-	iio_push_to_buffers_with_timestamp(indio_dev, &data->scan_buf, iio_get_time_ns(indio_dev));
+	iio_push_to_buffers_with_timestamp(indio_dev, scan_data, iio_get_time_ns(indio_dev));
 	iio_trigger_notify_done(indio_dev->trig);
 
 	return IRQ_HANDLED;
@@ -2462,29 +2452,6 @@ static int apds9999_power_off(struct apds9999_data *data){
 				  0);
 }
 
-// this function is called by the PM core when the device is idle and the autosuspend delay has expired.
-static int apds9999_runtime_suspend(struct device *dev){
-	struct apds9999_data *data = iio_priv(i2c_get_clientdata(to_i2c_client(dev)));
-
-	return apds9999_power_off(data);
-}
-
-// this function is called by the PM core when the device is needed again
-static int apds9999_runtime_resume(struct device *dev){
-	struct apds9999_data *data = iio_priv(i2c_get_clientdata(to_i2c_client(dev)));
-
-	return apds9999_power_on(data);
-}
-
-static const struct dev_pm_ops apds9999_pm_ops = {
-    // this sets up the system-wide suspend/resume callbacks
-	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
-
-	// this sets the runtime PM callbacks we defined above. The last argument is the idle callback
-	SET_RUNTIME_PM_OPS(apds9999_runtime_suspend, apds9999_runtime_resume, NULL)
-};
-
-
 /* ------------------- END POWER MANAGEMENT ------------------- */
 
 
@@ -2639,18 +2606,6 @@ static int apds9999_probe(struct i2c_client *client){
 	if (ret)
 		return ret;
 
-	// this sets the device as fully active in the PM runtime
-	// Has to be called before pm_runtime_enable() so the PM does not try to resume it
-	pm_runtime_set_active(&client->dev);
-	// this enables the runtime PM framework for this device
-	pm_runtime_enable(&client->dev);
-	// this is the timeout after which the PM powers down the device
-	pm_runtime_set_autosuspend_delay(&client->dev, 2000);
-	// this switches the device to the autosuspend policy
-	// TODO: consider that this may give raise to IRQ race conditions
-	pm_runtime_use_autosuspend(&client->dev);
-
-
 	dev_info(&client->dev,"Hello world from apds9999");
 	return 0;
 }
@@ -2663,10 +2618,6 @@ static void apds9999_remove(struct i2c_client *client){
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct apds9999_data *data = iio_priv(indio_dev);
 
-	// disable the runtime PM framework for this device
-	pm_runtime_disable(&client->dev);
-	// mark the device as suspended in the PM core's state machine
-	pm_runtime_set_suspended(&client->dev);
 	// power off the sensor
 	apds9999_power_off(data);
 
@@ -2695,7 +2646,6 @@ static struct i2c_driver apds9999_driver = {
       .driver = {
               .name           = APDS9999_DRIVER_NAME,   // this is the drivers name and should match the modules name
               .of_match_table = apds9999_oftable,
-              .pm             = pm_ptr(&apds9999_pm_ops),
       },
 
       .id_table       = apds9999_idtable,
