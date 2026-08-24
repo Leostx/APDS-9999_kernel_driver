@@ -35,6 +35,7 @@
  *
  */
 
+#include <assert.h>
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
@@ -56,6 +57,8 @@
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
 #include <linux/pm.h>              // dev_pm_ops, SET_RUNTIME_PM_OPS, SET_SYSTEM_SLEEP_PM_OPS
 #include <linux/pm_runtime.h>      // pm_runtime_set_active, pm_runtime_enable, etc.
+#include <stddef.h>
+#include <stdio.h>
 // the following are for the triggered buffer
 #ifdef APDS9999_BUFFER
 #include <linux/iio/buffer.h>
@@ -2294,6 +2297,40 @@ static ssize_t apds9999_ps_logic_mode_store(struct device *dev, struct device_at
 
 /* -------------------------- END PS_LOGIC_MODE EVENT ATTRIBUTE -------------------------- */
 
+static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
+{
+    struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct apds9999_data *data = iio_priv(indio_dev);
+    // We write the SW_RESET bit to the MAIN_CTRL register to trigger the reset
+	// So we reset the chip also during a warm reboot without a power cycle
+	// This disables everything else since we write the full register, but it doesnt matter since we are performing the reset anyway
+	// the error code we exclude is because the chip does not respond with an ack, since it has been reset
+    int ret;
+    ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET)
+    if(ret && ret != -EREMOTEIO)/* EREMOTEIO: "Remote I/O error" */
+    {
+        dev_err(&data->indio_dev->dev, "software reset failed: %d\n", ret);
+        return ret;
+    }
+    usleep_range(1000,1500);
+
+    ret = apds9999_power_on(data);
+    if(ret)
+    {
+        dev_err(&data->indio_dev->dev, "power on failed: %d\n", ret);
+        return ret;
+    }
+    ret = regmap_register_patch(data->regmap, apds9999_reg_defaults, ARRAY_SIZE(apds9999_reg_defaults));
+    if(ret)
+    {
+        dev_err(&data->indio_dev->dev, "regcache_sync failed: %d\n", ret);
+        return ret;
+    }
+    return sysfs_emit(buf, "%s\n", apds9999_ps_logic_mode_names[val]);
+}
+
+/* -------------------------- END RESET EVENT ATTRIBUTE -------------------------- */
+
 static IIO_DEVICE_ATTR(ls_int_sel, 0644, apds9999_ls_int_sel_show, apds9999_ls_int_sel_store, 0);
 static IIO_DEVICE_ATTR(ls_int_sel_available, 0444, apds9999_str_avail_show, NULL, APDS9999_STR_AVAIL_LS_INT_SEL);
 static IIO_DEVICE_ATTR(ps_logic_mode, 0644, apds9999_ps_logic_mode_show, apds9999_ps_logic_mode_store, 0);
@@ -2315,6 +2352,8 @@ static const struct attribute_group apds9999_event_attribute_group = {
 // these macros generate the "iio_dev_attr_<name>" structs such that we have custom attributs in our sysfs directory
 
 // these are the controll bits from the MAIN_CTRL register
+//
+static IIO_DEVICE_ATTR(sw_reset, 0644, NULL, apds9999_reset_write, APDS9999_RF_CTRL_SW_RESET);
 static IIO_DEVICE_ATTR(ps_enable, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_PS_EN);
 static IIO_DEVICE_ATTR(ls_enable, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_LS_EN);
 static IIO_DEVICE_ATTR(rgb_mode, 0644, apds9999_attr_bool_show, apds9999_attr_bool_store, APDS9999_RF_CTRL_RGB_MODE);
@@ -2354,6 +2393,8 @@ static IIO_DEVICE_ATTR(ps_analog_cancellation_available, 0444, apds9999_ps_ana_c
 // list of custom attributes exposed to sysfs
 static struct attribute *apds9999_attributes[] = {
     // MAIN_CTRL register
+
+    &iio_dev_attr_sw_reset.dev_attr.attr,
 	&iio_dev_attr_ps_enable.dev_attr.attr,
 	&iio_dev_attr_ls_enable.dev_attr.attr,
 	&iio_dev_attr_rgb_mode.dev_attr.attr,
