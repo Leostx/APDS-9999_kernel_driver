@@ -38,7 +38,6 @@
  *
  */
 
-#include <assert.h>
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
@@ -430,6 +429,48 @@ static const struct regmap_access_table apds9999_precious_table = {
 
 // Here we set the default register values. By doing this we should reduce the startup time since the data does not need to get read at startup
 static const struct reg_default apds9999_reg_defaults[] = {
+
+	{ APDS9999_REG_MAIN_CTRL, APDS9999_REG_MAIN_CTRL_DEF },
+	{ APDS9999_REG_PS_VCSEL, APDS9999_REG_PS_VCSEL_DEF },
+	{ APDS9999_REG_PS_PULSES, APDS9999_REG_PS_PULSES_DEF },
+	{ APDS9999_REG_PS_MEAS_RATE, APDS9999_REG_PS_MEAS_RATE_DEF },
+	{ APDS9999_REG_LS_MEAS_RATE, APDS9999_REG_LS_MEAS_RATE_DEF },
+	{ APDS9999_REG_LS_GAIN, APDS9999_REG_LS_GAIN_DEF },
+	{ APDS9999_REG_PART_ID, APDS9999_REG_PART_ID_DEF },
+	{ APDS9999_REG_MAIN_STATUS, APDS9999_REG_MAIN_STATUS_DEF },
+	{ APDS9999_REG_PS_DATA_0, APDS9999_REG_PS_DATA_0_DEF },
+	{ APDS9999_REG_PS_DATA_1, APDS9999_REG_PS_DATA_1_DEF },
+	{ APDS9999_REG_LS_DATA_IR_0, APDS9999_REG_LS_DATA_IR_0_DEF },
+	{ APDS9999_REG_LS_DATA_IR_1, APDS9999_REG_LS_DATA_IR_1_DEF },
+	{ APDS9999_REG_LS_DATA_IR_2, APDS9999_REG_LS_DATA_IR_2_DEF },
+	{ APDS9999_REG_LS_DATA_GREEN_0, APDS9999_REG_LS_DATA_GREEN_0_DEF },
+	{ APDS9999_REG_LS_DATA_GREEN_1, APDS9999_REG_LS_DATA_GREEN_1_DEF },
+	{ APDS9999_REG_LS_DATA_GREEN_2, APDS9999_REG_LS_DATA_GREEN_2_DEF },
+	{ APDS9999_REG_LS_DATA_BLUE_0, APDS9999_REG_LS_DATA_BLUE_0_DEF },
+	{ APDS9999_REG_LS_DATA_BLUE_1, APDS9999_REG_LS_DATA_BLUE_1_DEF },
+	{ APDS9999_REG_LS_DATA_BLUE_2, APDS9999_REG_LS_DATA_BLUE_2_DEF },
+	{ APDS9999_REG_LS_DATA_RED_0, APDS9999_REG_LS_DATA_RED_0_DEF },
+	{ APDS9999_REG_LS_DATA_RED_1, APDS9999_REG_LS_DATA_RED_1_DEF },
+	{ APDS9999_REG_LS_DATA_RED_2, APDS9999_REG_LS_DATA_RED_2_DEF },
+	{ APDS9999_REG_INT_CFG, APDS9999_REG_INT_CFG_DEF },
+	{ APDS9999_REG_INT_PST, APDS9999_REG_INT_PST_DEF },
+	{ APDS9999_REG_PS_THRES_UP_0, APDS9999_REG_PS_THRES_UP_0_DEF },
+	{ APDS9999_REG_PS_THRES_UP_1, APDS9999_REG_PS_THRES_UP_1_DEF },
+	{ APDS9999_REG_PS_THRES_LOW_0, APDS9999_REG_PS_THRES_LOW_0_DEF },
+	{ APDS9999_REG_PS_THRES_LOW_1, APDS9999_REG_PS_THRES_LOW_1_DEF },
+	{ APDS9999_REG_PS_CAN_0, APDS9999_REG_PS_CAN_0_DEF },
+	{ APDS9999_REG_PS_CAN_1, APDS9999_REG_PS_CAN_1_DEF },
+	{ APDS9999_REG_LS_THRES_UP_0, APDS9999_REG_LS_THRES_UP_0_DEF },
+	{ APDS9999_REG_LS_THRES_UP_1, APDS9999_REG_LS_THRES_UP_1_DEF },
+	{ APDS9999_REG_LS_THRES_UP_2, APDS9999_REG_LS_THRES_UP_2_DEF },
+	{ APDS9999_REG_LS_THRES_LOW_0, APDS9999_REG_LS_THRES_LOW_0_DEF },
+	{ APDS9999_REG_LS_THRES_LOW_1, APDS9999_REG_LS_THRES_LOW_1_DEF },
+	{ APDS9999_REG_LS_THRES_LOW_2, APDS9999_REG_LS_THRES_LOW_2_DEF },
+	{ APDS9999_REG_LS_THRES_VAR, APDS9999_REG_LS_THRES_VAR_DEF },
+
+};
+
+static const struct reg_sequence apds9999_reg_sequence_defaults[] = {
 
 	{ APDS9999_REG_MAIN_CTRL, APDS9999_REG_MAIN_CTRL_DEF },
 	{ APDS9999_REG_PS_VCSEL, APDS9999_REG_PS_VCSEL_DEF },
@@ -2296,7 +2337,7 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
 	// This disables everything else since we write the full register, but it doesnt matter since we are performing the reset anyway
 	// the error code we exclude is because the chip does not respond with an ack, since it has been reset
     int ret;
-    ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET)
+    ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET);
     if(ret && ret != -EREMOTEIO)/* EREMOTEIO: "Remote I/O error" */
     {
         dev_err(&data->indio_dev->dev, "software reset failed: %d\n", ret);
@@ -2310,13 +2351,13 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
         dev_err(&data->indio_dev->dev, "power on failed: %d\n", ret);
         return ret;
     }
-    ret = regmap_register_patch(data->regmap, apds9999_reg_defaults, ARRAY_SIZE(apds9999_reg_defaults));
+    ret = regmap_register_patch(data->regmap, apds9999_reg_sequence_defaults, ARRAY_SIZE(apds9999_reg_sequence_defaults));
     if(ret)
     {
         dev_err(&data->indio_dev->dev, "regcache_sync failed: %d\n", ret);
         return ret;
     }
-    return sysfs_emit(buf, "%s\n", apds9999_ps_logic_mode_names[val]);
+    return sysfs_emit(buf, "Reset\n");
 }
 
 /* -------------------------- END RESET EVENT ATTRIBUTE -------------------------- */
