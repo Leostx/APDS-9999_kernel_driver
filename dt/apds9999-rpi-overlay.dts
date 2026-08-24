@@ -5,7 +5,7 @@
  *
  * Compatible: brcm,apds9999
  * Interface:  I2C (address 0x52)
- * IRQ_TYPE_EDGE_FALLING = 1
+ * IRQ_TYPE_EDGE_FALLING = 2
  */
 
 /dts-v1/;
@@ -26,7 +26,7 @@
 				compatible = "brcm,apds9999";
 				reg = <0x52>;
 				interrupt-parent = <&gpio>;
-				interrupts = <4 1>;  /* GPIO4, falling edge */
+				interrupts = <4 2>;  /* GPIO4, falling edge (IRQ_TYPE_EDGE_FALLING = 2) */
 				status = "okay";
 			};
 		};
