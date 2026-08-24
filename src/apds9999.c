@@ -33,6 +33,9 @@
  *          Since the Interrupt lines are threshold based and not data-ready, it doesn't
  *          seem to make sense to use these fields.
  *
+ * - [ ] Power Management may be a usefull feature
+ *          The driver could disable the sensor to save power
+ *
  */
 
 #include <linux/module.h>
@@ -55,7 +58,7 @@
 #include <linux/irq.h>              // irq_get_irq_data, irqd_get_trigger_type
 #include <linux/iio/events.h>    // iio_event_spec, iio_push_event, IIO_EV_TYPE_THRESH, etc.
 #include <linux/pm.h>              // dev_pm_ops, SET_RUNTIME_PM_OPS, SET_SYSTEM_SLEEP_PM_OPS
-#include <linux/pm_runtime.h>      // pm_runtime_set_active, pm_runtime_enable, etc.
+
 // the following are for the triggered buffer
 #ifdef APDS9999_BUFFER
 #include <linux/iio/buffer.h>
@@ -1493,28 +1496,8 @@ static int apds9999_buffer_preenable(struct iio_dev *indio_dev){
 	return 0;
 }
 
-static int apds9999_buffer_postenable(struct iio_dev *indio_dev){
-	struct apds9999_data *data = iio_priv(indio_dev);
-
-	// get a reference to the PowerManagement, so the device is not powered off while the buffer is active
-	pm_runtime_get_sync(&data->client->dev);
-
-	return 0;
-}
-
-static int apds9999_buffer_predisable(struct iio_dev *indio_dev){
-	struct apds9999_data *data = iio_priv(indio_dev);
-
-	// release the runtime PM reference acquired in postenable. So the device can power off
-	pm_runtime_put_autosuspend(&data->client->dev);
-
-	return 0;
-}
-
 static const struct iio_buffer_setup_ops apds9999_buffer_setup_ops = {
 	.preenable  = apds9999_buffer_preenable,
-	.postenable = apds9999_buffer_postenable,
-	.predisable = apds9999_buffer_predisable,
 };
 
 /* ------------------- TRIGGERED BUFFER HANDLER ------------------- */
@@ -2430,29 +2413,6 @@ static int apds9999_power_off(struct apds9999_data *data){
 				  0);
 }
 
-// this function is called by the PM core when the device is idle and the autosuspend delay has expired.
-static int apds9999_runtime_suspend(struct device *dev){
-	struct apds9999_data *data = iio_priv(i2c_get_clientdata(to_i2c_client(dev)));
-
-	return apds9999_power_off(data);
-}
-
-// this function is called by the PM core when the device is needed again
-static int apds9999_runtime_resume(struct device *dev){
-	struct apds9999_data *data = iio_priv(i2c_get_clientdata(to_i2c_client(dev)));
-
-	return apds9999_power_on(data);
-}
-
-static const struct dev_pm_ops apds9999_pm_ops = {
-    // this sets up the system-wide suspend/resume callbacks
-	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
-
-	// this sets the runtime PM callbacks we defined above. The last argument is the idle callback
-	SET_RUNTIME_PM_OPS(apds9999_runtime_suspend, apds9999_runtime_resume, NULL)
-};
-
-
 /* ------------------- END POWER MANAGEMENT ------------------- */
 
 
@@ -2607,19 +2567,6 @@ static int apds9999_probe(struct i2c_client *client){
 	if (ret)
 		return ret;
 
-	// this sets the device as fully active in the PM runtime
-	// Has to be called before pm_runtime_enable() so the PM does not try to resume it
-	pm_runtime_set_active(&client->dev);
-	// configure autosuspend BEFORE enabling the PM framework
-	// this is the timeout after which the PM powers down the device
-	pm_runtime_set_autosuspend_delay(&client->dev, 2000);
-	// this switches the device to the autosuspend policy
-	// TODO: consider that this may give raise to IRQ race conditions
-	pm_runtime_use_autosuspend(&client->dev);
-	// this enables the runtime PM framework for this device
-	pm_runtime_enable(&client->dev);
-
-
 	dev_info(&client->dev,"Hello world from apds9999");
 	return 0;
 }
@@ -2632,10 +2579,6 @@ static void apds9999_remove(struct i2c_client *client){
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct apds9999_data *data = iio_priv(indio_dev);
 
-	// disable the runtime PM framework for this device
-	pm_runtime_disable(&client->dev);
-	// mark the device as suspended in the PM core's state machine
-	pm_runtime_set_suspended(&client->dev);
 	// power off the sensor
 	apds9999_power_off(data);
 
@@ -2664,7 +2607,6 @@ static struct i2c_driver apds9999_driver = {
       .driver = {
               .name           = APDS9999_DRIVER_NAME,   // this is the drivers name and should match the modules name
               .of_match_table = apds9999_oftable,
-              .pm             = pm_ptr(&apds9999_pm_ops),
       },
 
       .id_table       = apds9999_idtable,
