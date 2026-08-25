@@ -365,9 +365,7 @@
 	.scan_index              = _si,									                        \
 	.scan_type               = APDS9999_INTENSITY_SCAN_TYPE,		                        \
 	.info_mask_separate      = BIT(IIO_CHAN_INFO_RAW) |	BIT(IIO_CHAN_INFO_PROCESSED),       \
-	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_HARDWAREGAIN) | BIT(IIO_CHAN_INFO_SCALE), \
-	/* The following is for having the *_available file in the sysfs dir that runs read_avail when read */  \
-	.info_mask_shared_by_type_available = BIT(IIO_CHAN_INFO_HARDWAREGAIN),                  \
+	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE), \
 }
 
 /* ------------------- END IIO CHANNEL DEFINES ------------------- */
