@@ -2433,7 +2433,7 @@ static IIO_DEVICE_ATTR(ls_meas_rate_ms, 0644, apds9999_ls_meas_rate_show, apds99
 static IIO_DEVICE_ATTR(ls_meas_rate_ms_available, 0444, apds9999_uint_avail_show, NULL, APDS9999_UINT_AVAIL_LS_RATE);
 
 // PS overflow status
-static IIO_DEVICE_ATTR(ps_overflow, 0444, apds9999_ps_overflow_show, NULL, 0);
+static IIO_DEVICE_ATTR(in_proximity_overflow, 0444, apds9999_ps_overflow_show, NULL, 0);
 
 // PS_CAN register: analog cancellation level
 static IIO_DEVICE_ATTR(in_proximity_calibbias_ana, 0644, apds9999_ps_ana_can_show, apds9999_ps_ana_can_store, 0);
@@ -2469,7 +2469,7 @@ static struct attribute *apds9999_attributes[] = {
 	&iio_dev_attr_ls_meas_rate_ms.dev_attr.attr,
 	&iio_dev_attr_ls_meas_rate_ms_available.dev_attr.attr,
 	// PS overflow status
-	&iio_dev_attr_ps_overflow.dev_attr.attr,
+	&iio_dev_attr_in_proximity_overflow.dev_attr.attr,
 	// PS_CAN register: analog cancellation
 	&iio_dev_attr_in_proximity_calibbias_ana.dev_attr.attr,
 	&iio_dev_attr_in_proximity_calibbias_ana_available.dev_attr.attr,
