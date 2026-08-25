@@ -2407,6 +2407,7 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
         goto err_reset_unlock;
     }
 
+    mutex_unlock(&data->lock);
     return len;
 
 err_reset_unlock:
