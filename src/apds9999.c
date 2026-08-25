@@ -2363,18 +2363,21 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
     }
     usleep_range(1000,1500);
 
-    ret = apds9999_power_on(data);
-    if(ret)
-    {
-        dev_err(&data->indio_dev->dev, "power on failed: %d\n", ret);
-        return ret;
-    }
+    // Apply the default register to the regmap
     ret = regmap_register_patch(data->regmap, apds9999_reg_sequence_defaults, ARRAY_SIZE(apds9999_reg_sequence_defaults));
     if(ret)
     {
         dev_err(&data->indio_dev->dev, "regcache_sync failed: %d\n", ret);
         return ret;
     }
+
+    ret = apds9999_power_on(data);
+    if(ret)
+    {
+        dev_err(&data->indio_dev->dev, "power on failed: %d\n", ret);
+        return ret;
+    }
+
     return len;
 }
 
