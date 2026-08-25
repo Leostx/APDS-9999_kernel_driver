@@ -2353,7 +2353,7 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
 	// This disables everything else since we write the full register, but it doesnt matter since we are performing the reset anyway
 	// the error code we exclude is because the chip does not respond with an ack, since it has been reset
     int ret;
-    u8 buf[15];
+    u8 reset_buf[15];
     ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET);
     if(ret && ret != -EREMOTEIO)/* EREMOTEIO: "Remote I/O error" */
     {
@@ -2364,36 +2364,36 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
 
     mutex_lock(&data->lock);
 
-    buf[0] = APDS9999_REG_MAIN_CTRL_DEF;
-    buf[1] = APDS9999_REG_PS_VCSEL_DEF;
-    buf[2] = APDS9999_REG_PS_PULSES_DEF;
-    buf[3] = APDS9999_REG_PS_MEAS_RATE_DEF;
-    buf[4] = APDS9999_REG_LS_MEAS_RATE_DEF;
-    buf[5] = APDS9999_REG_LS_GAIN_DEF;
+    reset_buf[0] = APDS9999_REG_MAIN_CTRL_DEF;
+    reset_buf[1] = APDS9999_REG_PS_VCSEL_DEF;
+    reset_buf[2] = APDS9999_REG_PS_PULSES_DEF;
+    reset_buf[3] = APDS9999_REG_PS_MEAS_RATE_DEF;
+    reset_buf[4] = APDS9999_REG_LS_MEAS_RATE_DEF;
+    reset_buf[5] = APDS9999_REG_LS_GAIN_DEF;
 
-    ret = regmap_bulk_write(data->regmap, APDS9999_REG_MAIN_CTRL, buf, 6);
+    ret = regmap_bulk_write(data->regmap, APDS9999_REG_MAIN_CTRL, reset_buf, 6);
     if(ret){
         dev_err(&data->indio_dev->dev, "regmap_bulk_write failed: %d\n", ret);
         goto err_reset_unlock;
     }
 
-    buf[0] = APDS9999_REG_INT_CFG_DEF;
-    buf[1] = APDS9999_REG_INT_PST_DEF;
-    buf[2] = APDS9999_REG_PS_THRES_UP_0_DEF;
-    buf[3] = APDS9999_REG_PS_THRES_UP_1_DEF;
-    buf[4] = APDS9999_REG_PS_THRES_LOW_0_DEF;
-    buf[5] = APDS9999_REG_PS_THRES_LOW_1_DEF;
-    buf[6] = APDS9999_REG_PS_CAN_0_DEF ;
-    buf[7] = APDS9999_REG_PS_CAN_1_DEF;
-    buf[8] = APDS9999_REG_LS_THRES_UP_0_DEF;
-    buf[9] = APDS9999_REG_LS_THRES_UP_1_DEF;
-    buf[10] = APDS9999_REG_LS_THRES_UP_2_DEF;
-    buf[11] = APDS9999_REG_LS_THRES_LOW_0_DEF;
-    buf[12] = APDS9999_REG_LS_THRES_LOW_1_DEF;
-    buf[13] = APDS9999_REG_LS_THRES_LOW_2_DEF;
-    buf[14] = APDS9999_REG_LS_THRES_VAR_DEF;
+    reset_buf[0] = APDS9999_REG_INT_CFG_DEF;
+    reset_buf[1] = APDS9999_REG_INT_PST_DEF;
+    reset_buf[2] = APDS9999_REG_PS_THRES_UP_0_DEF;
+    reset_buf[3] = APDS9999_REG_PS_THRES_UP_1_DEF;
+    reset_buf[4] = APDS9999_REG_PS_THRES_LOW_0_DEF;
+    reset_buf[5] = APDS9999_REG_PS_THRES_LOW_1_DEF;
+    reset_buf[6] = APDS9999_REG_PS_CAN_0_DEF ;
+    reset_buf[7] = APDS9999_REG_PS_CAN_1_DEF;
+    reset_buf[8] = APDS9999_REG_LS_THRES_UP_0_DEF;
+    reset_buf[9] = APDS9999_REG_LS_THRES_UP_1_DEF;
+    reset_buf[10] = APDS9999_REG_LS_THRES_UP_2_DEF;
+    reset_buf[11] = APDS9999_REG_LS_THRES_LOW_0_DEF;
+    reset_buf[12] = APDS9999_REG_LS_THRES_LOW_1_DEF;
+    reset_buf[13] = APDS9999_REG_LS_THRES_LOW_2_DEF;
+    reset_buf[14] = APDS9999_REG_LS_THRES_VAR_DEF;
 
-    ret = regmap_bulk_write(data->regmap, APDS9999_REG_INT_CFG_DEF, buf, 15);
+    ret = regmap_bulk_write(data->regmap, APDS9999_REG_INT_CFG_DEF, reset_buf, 15);
     if(ret)
     {
         dev_err(&data->indio_dev->dev, "regmap_bulk_write failed: %d\n", ret);
