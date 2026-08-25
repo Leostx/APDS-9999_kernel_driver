@@ -2,7 +2,7 @@
 
 This is a linux kernel driver for the Broadcom APDS-9999 sensor.
 
-THe sensor features a proximity (PS) as well as a light sensor (LS). The light sensor can be configured to work as ambient light sensor (ALS) or as full RGB sensor; in both modes it also measures infrared (IR) light.
+The sensor features a proximity sensor (PS) as well as a light sensor (LS). The light sensor can be configured to work as ambient light sensor (ALS) or as full RGB sensor; in both modes it also measures infrared (IR) light.
 
 This driver implements almost all features of the sensor and exposes them to userspace. 
 
@@ -15,7 +15,7 @@ This repo is structured as follows:
 - `Makefile`: to build the kernel driver. Currently the version of the header files is hardcoded to `6.19.10+deb13-amd64`
 
 - `dt/`: device tree overlay files for a raspberry pi to specify the sensors address and interrupt pin
-- `test/`: test scripts to test the sensors various features with real hardware. Check out the `README` in the directory for more details.
+- `test/`: test scripts to test the sensor's various features with real hardware. Check out the `README` in the directory for more details.
 
 ## Driver features
 
@@ -23,9 +23,9 @@ The driver supports three modes of operation: Direct Mode, Triggered Buffer Mode
 
 ### Direct Mode
 
-All settings that the sensor exposes via registers, the driver allows to configure them through sysfs.
+For all settings the sensor exposes via registers, the driver allows to configure them through sysfs. 
 
-The following sections sections assumes the sensor is already initialized and the driver is loaded. See section [Installation](##Installation) for more details.
+The following sections sections assumes the sensor is already initialized and the driver is loaded. See section [Installation](#installation) for more details.
 
 We are considering the sysfs directory now. For example `/sys/bus/iio/devices/iio:device0/`. `cd` into it to see the files we are talking about in this section.
 
@@ -55,7 +55,7 @@ The sensor works by emitting a Laser Beam from a VCSEL and measuring the reflect
 
 To reduce the influence of crosstalk (for example the reflection from some coverglass), the sensor features some cancellation levels for the PS. These should be set during startup. 
 The *digital value* is subtracted from the measured PS data allready in the sensor, before it gets spit out. 
-By using the *analog value* a reduction in the dynamic rance of the sensor can be avoided. The digital cancellation can be used nevertheless.
+By using the *analog value*, a reduction in the dynamic rance of the sensor can be avoided. The digital cancellation can be used nevertheless.
 
 - `in_proximity_calibbias`: sets the digital bias value.
 - `in_proximity_calibbias_ana`: sets the analog bias value.
@@ -77,7 +77,7 @@ For all settings the respective `*_available` file is present to read from. It r
 #### Reading
 ##### Proximity Sensor Reading
 
-The proximity sensor readings are available only as raw values, since the physical value strongly depends from the settings. Some example graphs can be found in the datasheet at page 13. 
+The proximity sensor readings are available only as raw values, since the physical value strongly depends on the settings. Some example graphs can be found in the datasheet at page 13. 
 If an object is too close to the sensor, the raw value may overflow, in that case, the raw value will saturate and the overflow flag will be set.
 
 - `in_proximity_raw`: raw proximity sensor reading.
@@ -86,7 +86,7 @@ If an object is too close to the sensor, the raw value may overflow, in that cas
 ##### Light Sensor Reading
 
 The light sensor can be in two different modes, rgb or als. 
-In rgb mode the `in_intensity_*` channels are readable, while in als mode the `in_illuminance_*` is available.
+In rgb mode the `in_intensity_*` channels are readable, while in als mode the `in_illuminance_*` are available.
 The `in_intensity_ir_*` channels are always readable.
 
 For each channel, the raw value can be read as well as the processed value to which the right scale was allready applied. 
@@ -112,7 +112,7 @@ The scale that gets applied for the current gain and resolution settings can be 
 ### Events / Interrupts Mode
 
 The sensor has an interrupt pin that is pulled low when one of the sensors crosses a defined threshold. 
-In addition to that the LS can also be configured to trigger the interrupt when the output variation of consecutive measurements exceeds a defined limit. 
+In addition to that, the LS can also be configured to trigger the interrupt when the output variation of consecutive measurements exceeds a defined limit. 
 
 The PS has a *logic mode*, when it is activated, the interrupt pin gets updated after every measurement, instead of latching once it fires. This mode has priority over the LS, so when enabled no LS interrupt can be signaled.
 
@@ -191,7 +191,7 @@ To tell the kernel that the sensor is connected, on which I2C bus it is and what
 
 #### 1. Add a new i2c device through sysfs
 
-This is simply done by writing the sensors name and address to the `new_device` file in the i2c bus directory.
+This is simply done by writing the sensor's name and address to the `new_device` file in the i2c bus directory.
 ```
 echo apds9999 0x52 | tee /sys/bus/i2c/devices/i2c-1/new_device
 ```
@@ -204,7 +204,7 @@ By doing it like this, the kernel and the driver cannot be told if and what inte
 This strongly depends on the device being used. I tested the driver with a raspberry pi. 
 Therefore I created a device tree overlay that is loaded during runtime as needed.
 
-The overlay is located in the `dt/` directory. It is the `apds9999-overlay.dts` file. By compiling it the `apds9999-overlay.dtbo` file will be created. This file can then be loaded at runtime. To do it, the make file has a `load` target that will simply execute the command `dtoverlay dt/apds9999-rpi-overlay.dtbo`. It has also a `unload` target, which is strongly discouraged since this may lead to memory-leaks.
+The overlay is located in the `dt/` directory. It is the `apds9999-overlay.dts` file. By compiling it the `apds9999-overlay.dtbo` file will be created. This file can then be loaded at runtime. To do it, the Makefile has a `load` target that will simply execute the command `dtoverlay dt/apds9999-rpi-overlay.dtbo`. It has also a `unload` target, which is strongly discouraged since this may lead to memory-leaks.
 
 ### Driver loading
 
