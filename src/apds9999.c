@@ -2354,7 +2354,7 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
 	// the error code we exclude is because the chip does not respond with an ack, since it has been reset
     int ret;
     u8 reset_buf[15];
-    ret = regmap_write(data->regmap,APDS9999_CTRL_SW_RESET,0);
+    ret = regmap_write(data->regmap, APDS9999_REG_MAIN_CTRL, APDS9999_CTRL_SW_RESET);
     if(ret && ret != -EREMOTEIO)/* EREMOTEIO: "Remote I/O error" */
     {
         dev_err(&data->indio_dev->dev, "software reset failed: %d\n", ret);
@@ -2393,7 +2393,7 @@ static ssize_t apds9999_reset_write(struct device *dev, struct device_attribute 
     reset_buf[13] = APDS9999_REG_LS_THRES_LOW_2_DEF;
     reset_buf[14] = APDS9999_REG_LS_THRES_VAR_DEF;
 
-    ret = regmap_bulk_write(data->regmap, APDS9999_REG_INT_CFG_DEF, reset_buf, 15);
+    ret = regmap_bulk_write(data->regmap, APDS9999_REG_INT_CFG, reset_buf, 15);
     if(ret)
     {
         dev_err(&data->indio_dev->dev, "regmap_bulk_write failed: %d\n", ret);
